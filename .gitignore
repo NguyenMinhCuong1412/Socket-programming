@@ -1,0 +1,28 @@
+# Thư mục build/output
+build/
+bin/
+out/
+Debug/
+Release/
+x64/
+x86/
+
+# File biên dịch
+*.obj
+*.exe
+*.o
+*.pdb
+*.ilk
+
+# File cấu hình Visual Studio
+.vs/
+*.vcxproj.user
+*.suo
+
+# File hệ điều hành
+Thumbs.db
+.DS_Store
+
+# File tạm của editor
+*.tmp
+*.log
