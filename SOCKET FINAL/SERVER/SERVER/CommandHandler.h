@@ -2,27 +2,25 @@
 #include "lib.h"
 #include "Session.h"
 
-enum class FtpCommand {
-    USER, PASS, QUIT, NOOP, PWD, 
-    CWD, CDUP, MKD, RMD, LIST, 
-    NLST, STAT, SIZE, MDTM, TYPE, 
-    MODE, PORT, PASV, RETR, STOR, 
-    STOU, APPE, DELE, RNFR, RNTO, 
-    HASH, ABOR, HELP,
+enum class FtpCmd {
+	USER, PASS, QUIT, NOOP, PWD, CWD, CDUP, MKD,
+	RMD, LIST, NLST, STAT, SIZE, MDTM, TYPE, MODE,
+	PORT, PASV, RETR, STOR, STOU, APPE, DELE, RNFR, 
+	RNTO, HASH, ABOR, HELP,
 
-    UNKNOWN 
+	UNKNOWN
 };
 
-FtpCommand toFtpCommand(const string& command);
+FtpCmd toFtpCmd(const string&);
 
 class CommandHandler {
 private:
-    string handleUser(Session&, const string&);
-    string handlePass(Session&, const string&);
-    string handlePwd(Session&);
-    string handleNoop();
-    string handleQuit();
-    string handleHelp(const string&);
+	string handleUser(Session&, const string&);
+	string handlePass(Session&, const string&);
+	string handlePwd(Session&);
+	string handleNoop();
+	string handleQuit();
+	string handleHelp(const string&);
 public:
-    string handle(Session&, const string&, const string&);
+	string handle(Session&, const string&, const string&);
 };

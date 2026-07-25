@@ -10,12 +10,12 @@ private:
 public:
 	Session();
 
-	bool getLoggedIn() { return this->isLoggedIn; }
-	string getUserName() { return this->userName; }
+	bool getLogged() { return this->isLoggedIn; }
+	string getName() { return this->userName; }
 	string getDir() { return this->currentDir; }
 
-	void setLoggedIn(bool);
-	void setUserName(string);
+	void setLogged(bool);
+	void setName(string);
 	void setDir(string);
 
 	~Session() {};

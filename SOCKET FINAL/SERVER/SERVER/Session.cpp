@@ -6,6 +6,6 @@ Session::Session() {
 	this->currentDir = "/";
 }
 
-void Session::setLoggedIn(bool logged) { this->isLoggedIn = logged; }
-void Session::setUserName(string name) { this->userName = name; }
+void Session::setLogged(bool logged) { this->isLoggedIn = logged; }
+void Session::setName(string name) { this->userName = name; }
 void Session::setDir(string dir) { this->currentDir = dir; }
