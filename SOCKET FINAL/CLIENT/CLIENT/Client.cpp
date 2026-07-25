@@ -63,7 +63,7 @@ int main() {
 		//Làm sạch vùng nhớ để chứa dữ liệu
 		ZeroMemory(buffer, sizeof(buffer));
 
-		//Nhận phản hồi 
+		//Nhận và kiểm tra phản hồi 
 		byteRecv = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
 		if (byteRecv > 0) cout << "Server: " << buffer << endl;
 		else if (byteRecv == 0) {
