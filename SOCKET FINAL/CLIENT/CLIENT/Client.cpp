@@ -49,7 +49,6 @@ int main() {
 
 	//4. Vòng lặp gửi lệnh / nhận phản hồi
 	string input;
-
 	while (true) {
 		cout << "ftp> ";
 

@@ -33,7 +33,7 @@ int main() {
 	sockaddr_in serverAddr;
 	serverAddr.sin_family = AF_INET;
 	serverAddr.sin_addr.s_addr = INADDR_ANY;
-	serverAddr.sin_port = htons(8080);
+	serverAddr.sin_port = htons(CONTROL_PORT);
 
 	//3. Bind Socket
 	if (bind(serverSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
@@ -51,19 +51,24 @@ int main() {
 		return 1;
 	}
 
-	cout << "Server listening on port 8080..." << endl;
+	cout << "Server listening on port " << CONTROL_PORT << "..." << endl;
 
 	//5. Accept Client
-	SOCKET clientSocket = accept(serverSocket, NULL, NULL);
+	sockaddr_in clientAddr;
+	int clientAddrLen = sizeof(clientAddr);
+	SOCKET clientSocket = accept(serverSocket, (sockaddr*)&clientAddr, &clientAddrLen);
 	if (clientSocket == INVALID_SOCKET) {
 		cerr << format("421 Service unavailable, accept failed (WSA error: {})", WSAGetLastError()) << endl;
 		closesocket(serverSocket);
 		WSACleanup();
 		return 1;
 	}
-	cout << "Client connected" << endl;
 
-	string greeting = "220 Service ready for new user\r\n";
+	char clientIpStr[INET_ADDRSTRLEN];
+	inet_ntop(AF_INET, &clientAddr.sin_addr, clientIpStr, INET_ADDRSTRLEN); //Chuyển định dạng IP sang dạng chuỗi
+	cout << "Client connected from " << clientIpStr << endl;
+
+	string greeting = "220 Service ready\r\n";
 	send(clientSocket, greeting.c_str(), (int)greeting.size(), 0);
 
 	//6. Vòng lặp gửi phản hồi / nhận lệnh
