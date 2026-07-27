@@ -1,34 +1,45 @@
-#include "CommandHandler.h"
+#include "CmdHandler.h"
 
-FtpCommand toFtpCommand(const string& command) {
-    if (command == "USER") return FtpCommand::USER;
-    if (command == "PASS") return FtpCommand::PASS;
-    if (command == "QUIT") return FtpCommand::QUIT;
-    if (command == "NOOP") return FtpCommand::NOOP;
-    if (command == "PWD")  return FtpCommand::PWD;
-    if (command == "CWD")  return FtpCommand::CWD;
-    if (command == "CDUP") return FtpCommand::CDUP;
-    if (command == "MKD")  return FtpCommand::MKD;
-    if (command == "RMD")  return FtpCommand::RMD;
-    if (command == "LIST") return FtpCommand::LIST;
-    if (command == "NLST") return FtpCommand::NLST;
-    if (command == "STAT") return FtpCommand::STAT;
-    if (command == "SIZE") return FtpCommand::SIZE;
-    if (command == "MDTM") return FtpCommand::MDTM;
-    if (command == "TYPE") return FtpCommand::TYPE;
-    if (command == "MODE") return FtpCommand::MODE;
-    if (command == "PORT") return FtpCommand::PORT;
-    if (command == "PASV") return FtpCommand::PASV;
-    if (command == "RETR") return FtpCommand::RETR;
-    if (command == "STOR") return FtpCommand::STOR;
-    if (command == "STOU") return FtpCommand::STOU;
-    if (command == "APPE") return FtpCommand::APPE;
-    if (command == "DELE") return FtpCommand::DELE;
-    if (command == "RNFR") return FtpCommand::RNFR;
-    if (command == "RNTO") return FtpCommand::RNTO;
-    if (command == "HASH") return FtpCommand::HASH;
-    if (command == "ABOR") return FtpCommand::ABOR;
-    if (command == "HELP") return FtpCommand::HELP;
+void parseCmd(const string& raw, string& cmd, string& arg) {
+	string clean = raw;
+	while (!clean.empty() && (clean.back() == '\r' || clean.back() == '\n')) clean.pop_back();
+
+	istringstream iss(clean);
+	iss >> cmd;
+	getline(iss, arg);
+	if (!arg.empty() && arg[0] == ' ') arg = arg.substr(1);
+	for (auto& c : cmd) c = toupper(c);
+}
+
+FtpCommand toFtpCommand(const string& cmd) {
+    if (cmd == "USER") return FtpCommand::USER;
+    if (cmd == "PASS") return FtpCommand::PASS;
+    if (cmd == "QUIT") return FtpCommand::QUIT;
+    if (cmd == "NOOP") return FtpCommand::NOOP;
+    if (cmd == "PWD")  return FtpCommand::PWD;
+    if (cmd == "CWD")  return FtpCommand::CWD;
+    if (cmd == "CDUP") return FtpCommand::CDUP;
+    if (cmd == "MKD")  return FtpCommand::MKD;
+    if (cmd == "RMD")  return FtpCommand::RMD;
+    if (cmd == "LIST") return FtpCommand::LIST;
+    if (cmd == "NLST") return FtpCommand::NLST;
+    if (cmd == "STAT") return FtpCommand::STAT;
+    if (cmd == "SIZE") return FtpCommand::SIZE;
+    if (cmd == "MDTM") return FtpCommand::MDTM;
+    if (cmd == "TYPE") return FtpCommand::TYPE;
+    if (cmd == "MODE") return FtpCommand::MODE;
+    if (cmd == "PORT") return FtpCommand::PORT;
+    if (cmd == "PASV") return FtpCommand::PASV;
+    if (cmd == "RETR") return FtpCommand::RETR;
+    if (cmd == "STOR") return FtpCommand::STOR;
+    if (cmd == "STOU") return FtpCommand::STOU;
+    if (cmd == "APPE") return FtpCommand::APPE;
+    if (cmd == "DELE") return FtpCommand::DELE;
+    if (cmd == "RNFR") return FtpCommand::RNFR;
+    if (cmd == "RNTO") return FtpCommand::RNTO;
+    if (cmd == "HASH") return FtpCommand::HASH;
+    if (cmd == "ABOR") return FtpCommand::ABOR;
+    if (cmd == "HELP") return FtpCommand::HELP;
     return FtpCommand::UNKNOWN;
 }
 

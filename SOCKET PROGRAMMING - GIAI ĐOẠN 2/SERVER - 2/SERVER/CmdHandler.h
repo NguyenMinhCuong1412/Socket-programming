@@ -3,15 +3,17 @@
 #include "Session.h"
 
 enum class FtpCommand {
-    USER, PASS, QUIT, NOOP, PWD, 
-    CWD, CDUP, MKD, RMD, LIST, 
-    NLST, STAT, SIZE, MDTM, TYPE, 
-    MODE, PORT, PASV, RETR, STOR, 
-    STOU, APPE, DELE, RNFR, RNTO, 
+    USER, PASS, QUIT, NOOP, PWD,
+    CWD, CDUP, MKD, RMD, LIST,
+    NLST, STAT, SIZE, MDTM, TYPE,
+    MODE, PORT, PASV, RETR, STOR,
+    STOU, APPE, DELE, RNFR, RNTO,
     HASH, ABOR, HELP,
 
-    UNKNOWN 
+    UNKNOWN
 };
+
+void parseCmd(const string&, string&, string&);
 
 FtpCommand toFtpCommand(const string& command);
 

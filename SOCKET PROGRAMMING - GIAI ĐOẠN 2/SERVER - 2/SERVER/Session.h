@@ -9,14 +9,13 @@ private:
 	string currentDir;
 public:
 	Session();
+	~Session() = default;
 
-	bool getLoggedIn() { return this->isLoggedIn; }
-	string getUserName() { return this->userName; }
-	string getDir() { return this->currentDir; }
+	bool getLoggedIn() const { return this->isLoggedIn; }
+	string getUserName() const { return this->userName; }
+	string getDir() const { return this->currentDir; }
 
 	void setLoggedIn(bool);
 	void setUserName(string);
 	void setDir(string);
-
-	~Session() {};
 };
