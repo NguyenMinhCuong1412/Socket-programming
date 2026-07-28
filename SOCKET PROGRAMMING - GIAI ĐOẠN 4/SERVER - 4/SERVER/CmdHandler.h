@@ -14,26 +14,25 @@ enum class FtpCommand {
     UNKNOWN
 };
 
-//Xử lý - tách lệnh FTP và đối số
+//Xử lý lệnh FTP
 void parseCmd(const string&, string&, string&);
 
-//Chuyển đổi lệnh từ string sang enum
+//Chuyển đổi lệnh: string -> enum
 FtpCommand toFtpCommand(const string& command);
 
-//Hàm liên quan đến các lệnh FTP
+//Hàm lệnh FTP
 class CommandHandler {
 private:
     SOCKET controlSocket = INVALID_SOCKET;
     string clientIp;
 
+    //Gửi xác nhận qua trung gian
     void sendIntermediate(const string& msg);
 
-    //Ghép Session::currentDir (đường dẫn logic FTP) + arg thành đường dẫn vật lý thật trên đĩa.
-    //outLogical nhận lại đường dẫn logic đã chuẩn hoá (dùng để lưu vào Session sau CWD, hiển thị PWD/257...).
-    //Trả về path rỗng nếu đường dẫn không hợp lệ / cố thoát khỏi SERVER_ROOT.
+    //Giải quyết vấn đề đường dẫn thật trên ổ đĩa
     fs::path resolvePath(const Session& s, const string& arg, string& outLogical);
 
-    //Giai đoạn 2
+    //Hàm lệnh FTP cụ thể
     string handleUser(Session&, const string&);
     string handlePass(Session&, const string&);
     string handlePwd(Session&);
@@ -41,7 +40,6 @@ private:
     string handleQuit();
     string handleHelp(const string&);
 
-    //Giai đoạn 3
     string handleType(Session&, const string&);
     string handleMode(Session&, const string&);
     string handleSize(Session&, const string&);
@@ -50,7 +48,6 @@ private:
     string handleStor(Session&, const string&);
     string handleRetr(Session&, const string&);
 
-    //Giai đoạn 4 - dữ liệu + thư mục
     string handleCwd(Session&, const string&);
     string handleCdup(Session&);
     string handleMkd(Session&, const string&);

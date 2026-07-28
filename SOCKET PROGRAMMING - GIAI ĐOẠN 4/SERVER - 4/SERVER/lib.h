@@ -26,6 +26,5 @@ constexpr unsigned short SERVER_DATA_PORT = 8081; // server bind cổng này đ�
 constexpr unsigned short CLIENT_DATA_PORT = 8082; // client bind cổng này để nhận RETR
 constexpr int CHUNK_SIZE = 1024;
 
-// Thư mục gốc thật trên đĩa mà "/" (gốc logic FTP) ánh xạ tới.
-// Mặc định = thư mục làm việc hiện tại lúc server khởi động (working directory của process).
+//Thư mục làm việc hiện tại lúc server khởi động (working directory của process).
 inline const fs::path SERVER_ROOT = fs::current_path();

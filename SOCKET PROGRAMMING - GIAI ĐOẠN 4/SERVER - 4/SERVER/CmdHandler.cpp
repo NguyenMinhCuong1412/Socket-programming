@@ -1,11 +1,13 @@
 #include "CmdHandler.h"
 #include "DataChannel.h"
 
-//Xử lý - tách lệnh FTP và đối số
 void parseCmd(const string& raw, string& cmd, string& arg) {
+    //Xử lý các kí tự có thể gây lỗi
     string clean = raw;
-    while (!clean.empty() && (clean.back() == '\r' || clean.back() == '\n')) clean.pop_back();
+    while (!clean.empty() && (clean.back() == '\r' || clean.back() == '\n')) 
+        clean.pop_back();
 
+    //Tách lệnh và đối số
     istringstream iss(clean);
     iss >> cmd;
     getline(iss, arg);
@@ -13,7 +15,6 @@ void parseCmd(const string& raw, string& cmd, string& arg) {
     for (auto& c : cmd) c = toupper(c);
 }
 
-//Chuyển đổi lệnh từ string sang enum
 FtpCommand toFtpCommand(const string& cmd) {
     if (cmd == "USER") return FtpCommand::USER;
     if (cmd == "PASS") return FtpCommand::PASS;
@@ -46,21 +47,22 @@ FtpCommand toFtpCommand(const string& cmd) {
     return FtpCommand::UNKNOWN;
 }
 
-void CommandHandler::sendIntermediate(const string& msg) { send(controlSocket, msg.c_str(), (int)msg.size(), 0); }
+void CommandHandler::sendIntermediate(const string& msg) {  
+    send(controlSocket, msg.c_str(), (int)msg.size(), 0); 
+}
 
-//====================== resolvePath ======================
-//Ví dụ: currentDir = "/docs", arg = "report.txt" -> logic "/docs/report.txt"
-//       currentDir = "/docs", arg = "..(/../..)"  -> lexically_normal tự chặn không cho vượt "/"
-//       arg bắt đầu bằng "/" được coi là đường dẫn TUYỆT ĐỐI trong không gian FTP (không phải trên đĩa thật)
 fs::path CommandHandler::resolvePath(const Session& s, const string& arg, string& outLogical) {
     fs::path logical = (!arg.empty() && arg[0] == '/')
         ? fs::path(arg)                        // arg tuyệt đối trong không gian FTP
         : fs::path(s.getDir()) / arg;          // arg tương đối so với thư mục hiện tại
 
-    //Rút gọn "." và ".." - với 1 path có root ("/"), lexically_normal không cho ".." vượt quá root
+    //lexically_normal không cho ".." vượt quá root
     string normStr = logical.lexically_normal().generic_string();
     if (normStr.empty()) normStr = "/";
-    if (normStr[0] != '/') { outLogical.clear(); return fs::path(); } //an toàn kép, phòng trường hợp lạ
+    if (normStr[0] != '/') { 
+        outLogical.clear(); 
+        return fs::path(); 
+    } //an toàn kép, phòng trường hợp lạ
 
     outLogical = normStr;
 
@@ -69,7 +71,6 @@ fs::path CommandHandler::resolvePath(const Session& s, const string& arg, string
     return fs::weakly_canonical(SERVER_ROOT / relativePart); //weakly_canonical: OK cả khi path chưa tồn tại (MKD, STOR...)
 }
 
-//Giai đoạn 1
 string CommandHandler::handleUser(Session& s, const string& arg) {
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
     s.setUserName(arg);
@@ -135,11 +136,11 @@ string CommandHandler::handleHelp(const string& arg) {
     }
 }
 
-//Giai đoạn 2
 string CommandHandler::handleType(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     string t = arg;
     for (auto& c : t) c = toupper(c);
+    //Đều sử dụng BINARY để truyền - giản lược tối đa
     if (t != "A" && t != "I") return "501 Syntax error in parameters\r\n";
     s.setType(t);
     return format("200 Set type to {}\r\n", t);
@@ -149,7 +150,6 @@ string CommandHandler::handleMode(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     string m = arg;
     for (auto& c : m) c = toupper(c);
-    //B/C được phép về mặt cú pháp (optional-extend) nhưng chưa cài đặt truyền thật
     if (m == "B" || m == "C") return "502 Command not implemented\r\n";
     if (m != "S") return "501 Syntax error in parameters\r\n";
     s.setMode(m);
@@ -247,8 +247,6 @@ string CommandHandler::handleRetr(Session& s, const string& arg) {
     return ok ? "226 Transfer complete\r\n" : "426 Connection closed, transfer aborted\r\n";
 }
 
-//====================== Giai đoạn 4 ======================
-
 string CommandHandler::handleCwd(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
@@ -263,10 +261,7 @@ string CommandHandler::handleCwd(Session& s, const string& arg) {
     return format("250 Directory successfully changed to {}\r\n", newLogical);
 }
 
-string CommandHandler::handleCdup(Session& s) {
-    //CDUP tương đương CWD ".."
-    return handleCwd(s, "..");
-}
+string CommandHandler::handleCdup(Session& s) { return handleCwd(s, ".."); }
 
 string CommandHandler::handleMkd(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
@@ -434,7 +429,7 @@ string CommandHandler::handleRnto(Session& s, const string& arg) {
     return "250 Rename successful\r\n";
 }
 
-//Kiểm soát các lệnh cần gọi
+//Điều phối lệnh
 string CommandHandler::handle(Session& s, const string& com, const string& arg) {
     //Xử lý các lệnh không tồn tại
     FtpCommand fc = toFtpCommand(com);

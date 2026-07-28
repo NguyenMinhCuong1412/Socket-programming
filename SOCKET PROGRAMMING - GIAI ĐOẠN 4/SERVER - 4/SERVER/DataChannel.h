@@ -12,7 +12,7 @@ public:
 	bool start();
 
 	//append=false: ghi đè (dùng cho STOR/STOU) | append=true: nối vào cuối file (dùng cho APPE)
-	bool receiveFile(const string&, bool append = false);
+	bool receiveFile(const string&, bool = false);
 	bool sendFile(const string&, const string&, unsigned short);
 
 	void stop();
