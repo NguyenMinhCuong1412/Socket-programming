@@ -6,7 +6,7 @@ Session::Session() {
 	this->currentDir = "/";
 	this->dataType = "A";      //A = ASCII, I = IMAGE/BINARY
 	this->transferMode = "S";  //S = STREAM, B = BLOCK, C = COMPRESSED
-	this->renameFrom = "";
+	this->renameFrom = "";     //Tên (logical) đang chờ RNTO hoàn tất; rỗng = không có RNFR đang chờ
 }
 
 void Session::setLoggedIn(bool logged) { this->isLoggedIn = logged; }

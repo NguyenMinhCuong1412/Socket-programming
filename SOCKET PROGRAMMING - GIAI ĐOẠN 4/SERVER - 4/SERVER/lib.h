@@ -2,13 +2,13 @@
 #include <iostream>
 #include <string>
 #include <sstream>
-#include <fstream>     //Đọc/Ghi file
+#include <fstream>      //Đọc/Ghi file
 #include <format>
 #include <cctype>
 #include <ctime>
-#include <system_error>
-#include <filesystem>  //Làm việc với hệ thống file
-#include <chrono>      //Làm việc với thời gian 
+#include <system_error> //Làm việc với mã lỗi hệ thống
+#include <filesystem>   //Làm việc với hệ thống file
+#include <chrono>       //Làm việc với thời gian 
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
@@ -16,7 +16,8 @@ using std::cerr, std::cout,
 std::endl, std::format,
 std::string, std::istringstream,
 std::ifstream, std::ofstream,
-std::toupper, std::ios;
+std::toupper, std::ios, 
+std::tm, std::error_code;
 
 namespace fs = std::filesystem;
 namespace chr = std::chrono;

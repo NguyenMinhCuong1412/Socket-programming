@@ -10,9 +10,7 @@ public:
 	~DataChannel() = default;
 
 	bool start();
-
-	bool receiveFile(const string&, bool append = false);
+	bool receiveFile(const string&, bool = false);
 	bool sendFile(const string&, const string&, unsigned short);
-
 	void stop();
 };

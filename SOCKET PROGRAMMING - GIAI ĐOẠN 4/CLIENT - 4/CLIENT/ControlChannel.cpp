@@ -2,54 +2,55 @@
 #include "DataChannel.h"
 
 ControlChannel::ControlChannel(unsigned short port, string IP) {
-    this->tcpPort = port;
+    this->serverTcpPort = port;
     this->serverIp = IP;
-    this->clientSocket = INVALID_SOCKET;
+    this->tcpSocket = INVALID_SOCKET;
 }
 
 bool ControlChannel::start() {
-    //Tạo socket
-    this->clientSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (this->clientSocket == INVALID_SOCKET) {
+    //Tạo TCP-socket 
+    this->tcpSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (this->tcpSocket == INVALID_SOCKET) {
         cerr << format("421 Service not available, cannot create socket (WSA error: {})", WSAGetLastError()) << endl;
         return false;
     }
 
-    //Định danh địa chỉ Server cần kết nối tới
+    //Định danh địa chỉ Server-TCP cần kết nối tới
     sockaddr_in serverAddr;
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(this->tcpPort);
+    serverAddr.sin_port = htons(this->serverTcpPort);
 
+    //Chuyển đổi: định dạng string/char -> định dạng IP hệ thống 
     if (inet_pton(AF_INET, (this->serverIp).c_str(), &serverAddr.sin_addr) <= 0) {
         cerr << "501 Syntax error in parameters, invalid IP address" << endl;
-        closesocket(this->clientSocket);
-        this->clientSocket = INVALID_SOCKET;
+        closesocket(this->tcpSocket);
+        this->tcpSocket = INVALID_SOCKET;
         return false;
     }
 
-    //Kết nối đến Server
-    if (connect(this->clientSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
+    //Connect đến Server-TCP
+    if (connect(this->tcpSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
         cerr << format("421 Service not available, cannot connect to server (WSA error: {})", WSAGetLastError()) << endl;
-        closesocket(clientSocket);
-        this->clientSocket = INVALID_SOCKET;
+        closesocket(this->tcpSocket);
+        this->tcpSocket = INVALID_SOCKET;
         return false;
     }
 
     cout << "200 Connected successfully, ready for commands" << endl;
-
     return true;
 }
 
 void ControlChannel::run() {
     //Nhận dữ liệu từ Server 
     char buffer[1024] = { 0 };
-    int byteRecv = recv(this->clientSocket, buffer, sizeof(buffer) - 1, 0);
+    int byteRecv = recv(this->tcpSocket, buffer, sizeof(buffer) - 1, 0);
 
+    //Kiểm tra phản hồi
     if (byteRecv > 0) cout << "Server: " << buffer << endl;
     else {
         cerr << "421 Service not available, did not receive greeting from server" << endl;
-        closesocket(clientSocket);
-        this->clientSocket = INVALID_SOCKET;
+        closesocket(this->tcpSocket);
+        this->tcpSocket = INVALID_SOCKET;
         WSACleanup();
         return;
     }
@@ -57,15 +58,19 @@ void ControlChannel::run() {
     //Vòng lặp gửi lệnh/nhận phản hồi
     string input;
     while (true) {
+        //Nhập lệnh
         cout << "ftp> ";
         getline(cin, input);
         if (input.empty()) continue;
 
-        send(clientSocket, input.c_str(), (int)input.size(), 0);
+        //Gửi lệnh cho Server-TCP
+        send(this->tcpSocket, input.c_str(), (int)input.size(), 0);
         ZeroMemory(buffer, sizeof(buffer));
 
-        byteRecv = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+        //Nhận phản hồi
+        byteRecv = recv(this->tcpSocket, buffer, sizeof(buffer) - 1, 0);
 
+        //Kiểm tra phản hồi
         if (byteRecv > 0) {
             string reply(buffer);
             cout << "Server: " << reply << endl;
@@ -102,7 +107,7 @@ void ControlChannel::run() {
                 }
 
                 ZeroMemory(buffer, sizeof(buffer));
-                byteRecv = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+                byteRecv = recv(this->tcpSocket, buffer, sizeof(buffer) - 1, 0);
                 if (byteRecv > 0) cout << "Server: " << buffer << endl;
                 else if (byteRecv == 0) {
                     cout << "221 Connection closed by remote host" << endl;
@@ -128,8 +133,8 @@ void ControlChannel::run() {
 }
 
 void ControlChannel::stop() {
-    if (this->clientSocket != INVALID_SOCKET) {
-        closesocket(this->clientSocket);
-        this->clientSocket = INVALID_SOCKET;
+    if (this->tcpSocket != INVALID_SOCKET) {
+        closesocket(this->tcpSocket);
+        this->tcpSocket = INVALID_SOCKET;
     }
 }

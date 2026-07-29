@@ -9,7 +9,7 @@ private:
 	string currentDir;
 	string dataType;
 	string transferMode;
-	string renameFrom;    //Tên (logic) đang chờ RNTO hoàn tất; rỗng = không có RNFR đang chờ
+	string renameFrom;    
 public:
 	Session();
 	~Session() = default;

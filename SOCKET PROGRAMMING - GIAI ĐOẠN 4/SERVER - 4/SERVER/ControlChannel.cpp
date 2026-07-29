@@ -16,13 +16,13 @@ bool ControlChannel::start() {
     }
 
     //Định danh địa chỉ Server-TCP
-    sockaddr_in serverAddr;
-    serverAddr.sin_family = AF_INET;            //Loại mạng 
-    serverAddr.sin_addr.s_addr = INADDR_ANY;    //IP kết nối tới
-    serverAddr.sin_port = htons(this->tcpPort); //Cổng kết nối
+    sockaddr_in serverAddrTcp;
+    serverAddrTcp.sin_family = AF_INET;            //Loại mạng 
+    serverAddrTcp.sin_addr.s_addr = INADDR_ANY;    //IP kết nối tới
+    serverAddrTcp.sin_port = htons(this->tcpPort); //Cổng kết nối = CONTROL_PORT
 
     //Bind TCP-socket với địa chỉ Server-TCP
-    if (bind(this->tcpSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
+    if (bind(this->tcpSocket, (sockaddr*)&serverAddrTcp, sizeof(serverAddrTcp)) == SOCKET_ERROR) {
         cerr << format("421 Service not available, bind failed (WSA error: {})", WSAGetLastError()) << endl;
         closesocket(this->tcpSocket);     //Giải phóng tài nguyên liên quan đến socket
         this->tcpSocket = INVALID_SOCKET; //Đánh dấu đã vô hiệu lực, tránh giải phóng nhầm lúc sau
@@ -44,7 +44,7 @@ bool ControlChannel::start() {
 
 void ControlChannel::run() {
     //Dùng để lấy các thông tin của Client-TCP kết nối tới
-    sockaddr_in clientAddr;                 //Thông tin liên quan đến loại mạng + IP + PORT
+    sockaddr_in clientAddr;                 //Thông tin liên quan: loại mạng + IP + PORT
     int clientAddrLen = sizeof(clientAddr); //Kích thước vùng nhớ của địa chỉ Client-TCP
 
     //Accept Client-TCP
@@ -60,7 +60,7 @@ void ControlChannel::run() {
     //INET_ADDRSTRLEN: độ dài tối đa IPv4 - 15 + 1 '\0' = 16
     //Vùng nhớ chứa địa chỉ của Client
     char clientIpStr[INET_ADDRSTRLEN];
-    //Chuyển đổi từ định dạng IP hệ thống -> định dạng chuỗi string/mảng char
+    //Chuyển đổi: định dạng IP hệ thống -> định dạng chuỗi string/mảng char
     inet_ntop(AF_INET, &clientAddr.sin_addr, clientIpStr, INET_ADDRSTRLEN); 
     //Thông báo IP của Client-TCP kết nối tới
     cout << "Client connected from " << clientIpStr << endl;

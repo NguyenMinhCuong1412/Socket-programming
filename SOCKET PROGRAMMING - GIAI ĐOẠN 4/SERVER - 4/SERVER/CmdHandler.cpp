@@ -47,16 +47,17 @@ FtpCommand toFtpCommand(const string& cmd) {
     return FtpCommand::UNKNOWN;
 }
 
-void CommandHandler::sendIntermediate(const string& msg) {  
-    send(controlSocket, msg.c_str(), (int)msg.size(), 0); 
-}
+void CommandHandler::sendIntermediate(const string& msg) { send(clientSocket, msg.c_str(), (int)msg.size(), 0); }
 
 fs::path CommandHandler::resolvePath(const Session& s, const string& arg, string& outLogical) {
+    //Xác định tính tuyệt đối/tương đối của filename
     fs::path logical = (!arg.empty() && arg[0] == '/')
-        ? fs::path(arg)                        // arg tuyệt đối trong không gian FTP
-        : fs::path(s.getDir()) / arg;          // arg tương đối so với thư mục hiện tại
+        ? fs::path(arg)                    //Đường dẫn tuyệt đối - đầy đủ bắt đầu từ gốc hệ thống tệp (root directory) cho đến vị trí tệp/thư mục trên ổ cứng
+        : fs::path(s.getDir()) / arg;      //Đường dẫn tương đối - dựa trên vị trí hiện tại của chương trình đang chạy
 
+    //Chuẩn hóa đường dẫn 
     //lexically_normal không cho ".." vượt quá root
+    //generic_string: chuyển đổi path -> string
     string normStr = logical.lexically_normal().generic_string();
     if (normStr.empty()) normStr = "/";
     if (normStr[0] != '/') { 
@@ -67,8 +68,9 @@ fs::path CommandHandler::resolvePath(const Session& s, const string& arg, string
     outLogical = normStr;
 
     //Map sang đường dẫn vật lý thật: SERVER_ROOT + phần sau dấu "/" đầu
+    //Chặn path traversal 
     fs::path relativePart = (normStr == "/") ? fs::path() : fs::path(normStr.substr(1));
-    return fs::weakly_canonical(SERVER_ROOT / relativePart); //weakly_canonical: OK cả khi path chưa tồn tại (MKD, STOR...)
+    return fs::weakly_canonical(SERVER_ROOT / relativePart); //weakly_canonical: OK cả khi path chưa tồn tại
 }
 
 string CommandHandler::handleUser(Session& s, const string& arg) {
@@ -94,7 +96,7 @@ string CommandHandler::handleNoop() { return "200 NOOP OK\r\n"; }
 string CommandHandler::handleQuit() { return "221 Goodbye\r\n"; }
 
 string CommandHandler::handleHelp(const string& arg) {
-    if (arg.empty()) {
+    if (arg.empty()) {  //Hiển thị toàn bộ lệnh hỗ trợ
         string response = "214 The following commands are recognized:\r\n";
         response += "    USER    PASS    PWD     NOOP    QUIT    HELP\n";
         response += "    TYPE    MODE    SIZE    STAT    MDTM    STOR\n";
@@ -104,9 +106,9 @@ string CommandHandler::handleHelp(const string& arg) {
         return response;
     }
 
+    //Tra cứu chi tiết lệnh
     string cmd = arg;
     for (auto& c : cmd) c = toupper(c);
-
     switch (toFtpCommand(cmd)) {
     case FtpCommand::USER: return "214 Syntax: USER <username> - Send username to start authentication\r\n";
     case FtpCommand::PASS: return "214 Syntax: PASS <password> - Send password to complete authentication\r\n";
@@ -176,20 +178,21 @@ string CommandHandler::handleMdtm(Session& s, const string& arg) {
     if (filePath.empty() || !fs::exists(filePath))
         return format("550 File unavailable, {} not found\r\n", arg);
 
-    auto ftime = fs::last_write_time(filePath);
-    auto sctp = chr::clock_cast<chr::system_clock>(ftime);
-    auto tt = chr::system_clock::to_time_t(sctp);
+    auto ftime = fs::last_write_time(filePath);            //Định dạng file_time_type
+    auto sctp = chr::clock_cast<chr::system_clock>(ftime); //Định dạng time_point: ép file_time_type về mốc lịch sử chung mà hàm C++ hiểu
+    auto tt = chr::system_clock::to_time_t(sctp);          //Định dạng time_t: tổng giây từ 00:00:00 ngày 01/01/1970
 
-    std::tm tm;
-    localtime_s(&tm, &tt);
+    tm time;  //struct tm - time: lưu trữ các thành phần thời gian
+    localtime_s(&time, &tt);
 
     return format("213 {:04}{:02}{:02}{:02}{:02}{:02}\r\n",
-        tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+        time.tm_year + 1900, time.tm_mon + 1, time.tm_mday, 
+        time.tm_hour, time.tm_min, time.tm_sec);
 }
 
 string CommandHandler::handleStat(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
-    if (arg.empty()) {
+    if (arg.empty()) { //Trạng thái chung 
         return "211 FTP server status:\r\n"
             " User: " + s.getUserName() + "\r\n"
             " Current working directory: " + s.getDir() + "\r\n"
@@ -197,7 +200,7 @@ string CommandHandler::handleStat(Session& s, const string& arg) {
             " Transfer mode: " + s.getMode() + "\r\n"
             "211 End of status\r\n";
     }
-    else {
+    else {  //Trạng thái của file
         string logical;
         fs::path filePath = resolvePath(s, arg, logical);
         if (filePath.empty() || !fs::exists(filePath))
@@ -212,18 +215,18 @@ string CommandHandler::handleStor(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
 
+    //Kiểm tra tồn tại
     string logical;
     fs::path target = resolvePath(s, arg, logical);
     if (target.empty()) return "550 Invalid path\r\n";
 
+    //Khởi tạo kênh dữ liệu - UDP (Server nhận - Client gửi)
     DataChannel dc(SERVER_DATA_PORT);
-    if (!dc.start()) return "425 Can't open data connection\r\n";
+    if (!dc.start()) return "425 Can't open data connection\r\n"; 
 
-    sendIntermediate("150 File status okay, opening data connection\r\n");
-
-    bool ok = dc.receiveFile(target.string());
-    dc.stop();
-
+    sendIntermediate("150 File status okay, opening data connection\r\n"); //Gửi phản hồi xác nhận thành công
+    bool ok = dc.receiveFile(target.string()); //Server nhận dữ liệu từ Client
+    dc.stop(); //Dừng kênh dữ liệu - UDP
     return ok ? "226 Transfer complete\r\n" : "426 Connection closed, transfer aborted\r\n";
 }
 
@@ -231,19 +234,19 @@ string CommandHandler::handleRetr(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
 
+    //Kiểm tra tồn tại
     string logical;
     fs::path target = resolvePath(s, arg, logical);
     if (target.empty() || !fs::exists(target) || !fs::is_regular_file(target))
         return format("550 File unavailable, {} not found\r\n", arg);
 
+    //Khởi tạo kênh dữ liệu - UDP (Server gửi - Client nhận)
     DataChannel dc(0);
     if (!dc.start()) return "425 Can't open data connection\r\n";
 
-    sendIntermediate("150 File status okay, opening data connection\r\n");
-
-    bool ok = dc.sendFile(target.string(), clientIp, CLIENT_DATA_PORT);
-    dc.stop();
-
+    sendIntermediate("150 File status okay, opening data connection\r\n"); //Gửi phản hồi xác nhận thành công
+    bool ok = dc.sendFile(target.string(), clientIp, CLIENT_DATA_PORT);  //Server gửi dữ liệu tới Client
+    dc.stop(); //Dừng kênh dữ liệu - UDP
     return ok ? "226 Transfer complete\r\n" : "426 Connection closed, transfer aborted\r\n";
 }
 
@@ -251,13 +254,14 @@ string CommandHandler::handleCwd(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
 
+    //Lấy đường dẫn ảo và thực tế mới
     string newLogical;
     fs::path physical = resolvePath(s, arg, newLogical);
 
     if (physical.empty() || !fs::exists(physical) || !fs::is_directory(physical))
         return format("550 {} : No such directory\r\n", arg);
 
-    s.setDir(newLogical);
+    s.setDir(newLogical); //Thay đổi đường dẫn làm việc của Client trên Server
     return format("250 Directory successfully changed to {}\r\n", newLogical);
 }
 
@@ -267,15 +271,15 @@ string CommandHandler::handleMkd(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
 
+    //Lấy đường dẫn ảo và thực tế mới
     string newLogical;
     fs::path physical = resolvePath(s, arg, newLogical);
     if (physical.empty()) return "550 Invalid path\r\n";
 
-    std::error_code ec;
-    bool created = fs::create_directory(physical, ec); //chỉ tạo 1 cấp - nếu cha chưa có thì fail, đúng ngữ nghĩa MKD
+    error_code ec; //Chứa mã lỗi hệ thống được trả về an toàn - tránh crash (vừa khai báo = không có lỗi)
+    bool created = fs::create_directory(physical, ec); //create_directory: tạo 1 thư mục tại đường dãn thực tế đúng 1 cấp - nếu cha chưa có thì fail
     if (ec) return format("550 Can't create directory '{}' ({})\r\n", arg, ec.message());
     if (!created) return format("550 Directory '{}' already exists\r\n", arg);
-
     return format("257 \"{}\" created\r\n", newLogical);
 }
 
@@ -283,40 +287,36 @@ string CommandHandler::handleRmd(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
 
+    //Lấy đường dẫn ảo và thực tế mới
     string logical;
     fs::path physical = resolvePath(s, arg, logical);
     if (physical.empty() || !fs::exists(physical) || !fs::is_directory(physical))
         return format("550 {} : No such directory\r\n", arg);
 
-    std::error_code ec;
-    //fs::remove (khác remove_all) chỉ xóa được thư mục RỖNG - tự fail nếu còn file/thư mục con bên trong
-    bool removed = fs::remove(physical, ec);
-    if (ec || !removed)
-        return format("550 Can't remove '{}', directory not empty\r\n", arg);
-
+    error_code ec;
+    bool removed = fs::remove(physical, ec); //remove (khác remove_all) chỉ xóa được thư mục RỖNG - tự fail nếu còn file/thư mục con bên trong
+    if (ec || !removed) return format("550 Can't remove '{}', directory not empty\r\n", arg);
     return format("250 \"{}\" directory removed\r\n", arg);
 }
 
-//LIST/NLST: để đơn giản (project chưa cài PASV/PORT thật) kết quả được trả thẳng qua control
-//socket giống HELP/STAT, thay vì qua DataChannel UDP riêng như STOR/RETR.
 string CommandHandler::handleNlst(Session& s) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
 
+    //Lấy đường dẫn ảo và thực tế mới
     string logical;
     fs::path physical = resolvePath(s, "", logical);
-    if (physical.empty() || !fs::exists(physical))
-        return "550 Directory not found\r\n";
+    if (physical.empty() || !fs::exists(physical)) return "550 Directory not found\r\n";
 
     string body;
-    for (auto& entry : fs::directory_iterator(physical))
-        body += entry.path().filename().string() + "\r\n";
-
+    for (auto& entry : fs::directory_iterator(physical))   //directory_iterator: duyệt danh sách tệp/thư mục con nằm trong 
+        body += entry.path().filename().string() + "\r\n"; //entry.path(): trả về đường dẫn của từng file/thư mục con bên trong 
     return format("150 Here comes the directory listing\r\n{}226 Transfer complete\r\n", body);
 }
 
 string CommandHandler::handleList(Session& s) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
 
+    //Lấy đường dẫn ảo và thực tế mới
     string logical;
     fs::path physical = resolvePath(s, "", logical);
     if (physical.empty() || !fs::exists(physical))
@@ -324,34 +324,38 @@ string CommandHandler::handleList(Session& s) {
 
     string body;
     for (auto& entry : fs::directory_iterator(physical)) {
-        bool isDir = entry.is_directory();
-        uintmax_t size = isDir ? 0 : entry.file_size();
+        bool isDir = entry.is_directory();              //Kiểm tra thư mục hay tệp tin
+        uintmax_t size = isDir ? 0 : entry.file_size(); //uintmax_t: unsigned integer có kích thước lớn nhất hệ thống C++ hỗ trợ
         body += format("{}\t{}\t{}\r\n", isDir ? "<DIR>" : "FILE", size, entry.path().filename().string());
     }
-
     return format("150 Here comes the directory listing\r\n{}226 Transfer complete\r\n", body);
 }
 
 string CommandHandler::handleStou(Session& s) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
 
-    //Server tự đặt tên file - KHÔNG dùng tên do client gửi (đúng ngữ nghĩa STOU)
+    //Server tự đặt tên file - KHÔNG dùng tên do client gửi
     auto ms = chr::duration_cast<chr::milliseconds>(chr::system_clock::now().time_since_epoch()).count();
+    /*
+    system_clock::now(): lấy thời gian thực tế hiện tại của hệ thống máy tính
+    time_since_epoch(): tính khoảng thời gian trôi qua kể từ mốc Unix Epoch (C++, thường là 00:00:00 1/1/1970)
+    duration_cast<chr::milliseconds>(...): ép kiểu khoảng thời gian vừa lấy được sang đơn vị mili-giây
+    count(): Lấy ra giá trị số nguyên đại diện cho tổng số mili-giây đó
+    */
     string autoName = format("file_{}.dat", ms);
 
+    //Lấy đường dẫn ảo và thực tế mới
     string logical;
     fs::path target = resolvePath(s, autoName, logical);
     if (target.empty()) return "550 Invalid path\r\n";
 
+    //Khởi tạo kênh dữ liệu - UDP (Server nhận - Client gửi)
     DataChannel dc(SERVER_DATA_PORT);
     if (!dc.start()) return "425 Can't open data connection\r\n";
 
-    //Báo cho client biết tên file server đã chọn ngay trong response 150
-    sendIntermediate(format("150 FILE: {}\r\n", autoName));
-
-    bool ok = dc.receiveFile(target.string());
-    dc.stop();
-
+    sendIntermediate(format("150 FILE: {}\r\n", autoName));  //Báo cho client biết tên file server đã chọn
+    bool ok = dc.receiveFile(target.string()); //Server nhận dữ liệu từ Client
+    dc.stop(); //Dừng kênh dữ liệu - UDP
     return ok ? format("226 Transfer complete, stored as {}\r\n", autoName)
         : "426 Connection closed, transfer aborted\r\n";
 }
@@ -360,18 +364,17 @@ string CommandHandler::handleAppe(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
 
+    //Lấy đường dẫn ảo và thực tế mới
     string logical;
     fs::path target = resolvePath(s, arg, logical);
     if (target.empty()) return "550 Invalid path\r\n";
 
+    //Khởi tạo kênh dữ liệu - UDP (Server nhận - Client gửi)
     DataChannel dc(SERVER_DATA_PORT);
     if (!dc.start()) return "425 Can't open data connection\r\n";
-
     sendIntermediate("150 File status okay, opening data connection\r\n");
-
     bool ok = dc.receiveFile(target.string(), true); //append = true -> mở file bằng ios::app
-    dc.stop();
-
+    dc.stop(); //Dừng kênh dữ liệu - UDP
     return ok ? "226 Transfer complete\r\n" : "426 Connection closed, transfer aborted\r\n";
 }
 
@@ -379,16 +382,15 @@ string CommandHandler::handleDele(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
 
+    //Lấy đường dẫn ảo và thực tế mới
     string logical;
     fs::path target = resolvePath(s, arg, logical);
     if (target.empty() || !fs::exists(target) || !fs::is_regular_file(target))
         return format("550 {} : No such file\r\n", arg);
 
-    std::error_code ec;
+    error_code ec;
     bool removed = fs::remove(target, ec);
-    if (ec || !removed)
-        return format("550 Can't delete '{}'\r\n", arg);
-
+    if (ec || !removed) return format("550 Can't delete '{}'\r\n", arg);
     return format("250 \"{}\" deleted\r\n", arg);
 }
 
@@ -396,6 +398,7 @@ string CommandHandler::handleRnfr(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
 
+    //Lấy đường dẫn ảo và thực tế mới
     string logical;
     fs::path target = resolvePath(s, arg, logical);
     if (target.empty() || !fs::exists(target))
@@ -410,8 +413,7 @@ string CommandHandler::handleRnto(Session& s, const string& arg) {
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
 
     //Chưa có RNFR trước đó -> lỗi trình tự lệnh
-    if (s.getRenameFrom().empty())
-        return "503 Bad sequence of commands\r\n";
+    if (s.getRenameFrom().empty()) return "503 Bad sequence of commands\r\n";
 
     string oldLogical, newLogical;
     fs::path oldPath = resolvePath(s, s.getRenameFrom(), oldLogical);
@@ -419,13 +421,11 @@ string CommandHandler::handleRnto(Session& s, const string& arg) {
 
     s.setRenameFrom(""); //clear state ngay, dù thành công hay thất bại - tránh RNTO kế tiếp dùng nhầm
 
-    if (oldPath.empty() || newPath.empty() || !fs::exists(oldPath))
-        return "550 Rename failed\r\n";
+    if (oldPath.empty() || newPath.empty() || !fs::exists(oldPath)) return "550 Rename failed\r\n";
 
-    std::error_code ec;
-    fs::rename(oldPath, newPath, ec);
+    error_code ec;
+    fs::rename(oldPath, newPath, ec); 
     if (ec) return format("550 Rename failed ({})\r\n", ec.message());
-
     return "250 Rename successful\r\n";
 }
 

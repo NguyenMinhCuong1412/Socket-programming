@@ -5,7 +5,7 @@
 class ControlChannel {
 private:
 	unsigned short tcpPort; //Port để phục vụ kênh điều khiển
-	SOCKET tcpSocket;       //socket phục vụ kênh điều khiển
+	SOCKET tcpSocket;       //socket phục vụ kênh điều khiển - Server
 public:
 	ControlChannel(unsigned short);
 	~ControlChannel() = default;
