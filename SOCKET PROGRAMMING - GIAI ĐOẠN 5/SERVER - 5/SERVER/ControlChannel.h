@@ -5,14 +5,13 @@
 class ControlChannel {
 private:
 	unsigned short tcpPort; //Port để phục vụ kênh điều khiển
-	SOCKET tcpSocket;       //socket phục vụ kênh điều khiển - Server
+	SOCKET tcpSocket;       //socket phục vụ kênh điều khiển của Server-TCP
 
-	// Logic xử lý 1 client (trước đây nằm trong run()) - giờ chạy trong 1 thread riêng,
-	// cho phép nhiều client kết nối và thao tác đồng thời, không cần đợi nhau.
+	//Quản lý toàn bộ vòng đời của Kênh điều khiển cho một kết nối FTP từ Client-TCP
 	void handleClient(SOCKET clientSocket, string clientIp);
 public:
-	ControlChannel(unsigned short);
-	~ControlChannel() = default;
+	ControlChannel(unsigned short); //Constructor - tham số tcpPort
+	~ControlChannel() = default;    //Destructor mặc định
 
 	bool start();  //Tạo socket + định danh địa chỉ + Bind + Listen
 	void run();    //Vòng lặp accept() VÔ HẠN - mỗi client mới -> 1 std::thread riêng (detach)

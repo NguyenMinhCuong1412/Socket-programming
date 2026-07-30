@@ -47,19 +47,12 @@ FtpCommand toFtpCommand(const string& cmd) {
     return FtpCommand::UNKNOWN;
 }
 
-CommandHandler::~CommandHandler() { joinPreviousTransfer(); }
-
 void CommandHandler::joinPreviousTransfer() {
-    if (transferThread.joinable()) transferThread.join();
+    if (transferThread.joinable()) //Kiểm tra luồng phụ còn hoạt động 
+        transferThread.join();     //Bắt chương trình chờ xong xuôi
 }
 
 void CommandHandler::sendIntermediate(const string& msg) { send(clientSocket, msg.c_str(), (int)msg.size(), 0); }
-
-// Chọn port server LẮNG NGHE cho lệnh UPLOAD (STOR/APPE/STOU): dùng port PASSIVE
-// đã hẹn với client nếu đang ở chế độ PASSIVE, ngược lại dùng port mặc định.
-unsigned short CommandHandler::pickListenPort(Session& s) {
-    return (s.getDataMode() == DataMode::PASSIVE) ? s.getPassivePort() : SERVER_DATA_PORT;
-}
 
 fs::path CommandHandler::resolvePath(const Session& s, const string& arg, string& outLogical) {
     //Xác định tính tuyệt đối/tương đối của filename
@@ -84,6 +77,18 @@ fs::path CommandHandler::resolvePath(const Session& s, const string& arg, string
     fs::path relativePart = (normStr == "/") ? fs::path() : fs::path(normStr.substr(1));
     return fs::weakly_canonical(SERVER_ROOT / relativePart); //weakly_canonical: OK cả khi path chưa tồn tại
 }
+
+//Chọn port server LẮNG NGHE cho lệnh UPLOAD (STOR/APPE/STOU): dùng port PASSIVE
+unsigned short CommandHandler::pickListenPort(Session& s) {
+    return (s.getDataMode() == DataMode::PASSIVE) ? s.getPassivePort() : SERVER_DATA_PORT;
+}
+
+CommandHandler::CommandHandler() {
+    this->clientSocket = INVALID_SOCKET;
+    this->clientIp = "";
+}
+
+CommandHandler::~CommandHandler() { joinPreviousTransfer(); }
 
 string CommandHandler::handleUser(Session& s, const string& arg) {
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
@@ -201,7 +206,7 @@ string CommandHandler::handleMdtm(Session& s, const string& arg) {
     tm time;  //struct tm - time: lưu trữ các thành phần thời gian
     localtime_s(&time, &tt);
 
-    return format("213 {:04}{:02}{:02}{:02}{:02}{:02}\r\n",
+    return format("213 {:04}{:02}{:02}{:02}{:02}{:02}\r\n", //Định dạng YYYYMMDDhhmmss
         time.tm_year + 1900, time.tm_mon + 1, time.tm_mday,
         time.tm_hour, time.tm_min, time.tm_sec);
 }
@@ -231,21 +236,20 @@ string CommandHandler::handleStor(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
 
-    //Kiểm tra tồn tại
     string logical;
     fs::path target = resolvePath(s, arg, logical);
     if (target.empty()) return "550 Invalid path\r\n";
 
-    joinPreviousTransfer(); // đảm bảo transfer trước đã kết thúc hẳn trước khi bắt đầu cái mới
+    joinPreviousTransfer(); //Đảm bảo transfer trước đã kết thúc hẳn trước khi bắt đầu cái mới
 
-    //Khởi tạo kênh dữ liệu - UDP (Server nhận - Client gửi) - port tùy theo PASSIVE hay mặc định
+    //Khởi tạo kênh dữ liệu - UDP (Server nhận - Client gửi) - PASSIVE
     auto dc = make_shared<DataChannel>(pickListenPort(s));
     if (!dc->start()) return "425 Can't open data connection\r\n";
 
     sendIntermediate("150 File status okay, opening data connection\r\n"); //Gửi phản hồi xác nhận thành công
-    s.setActiveDataChannel(dc.get()); // đăng ký để ABOR (thread khác) có thể đóng socket này
+    s.setActiveDataChannel(dc.get()); //Đăng ký để ABOR (thread khác) có thể đóng socket này
 
-    // Chạy transfer thật ở THREAD PHỤ -> thread chính (đang đọc lệnh) rảnh ngay để nhận ABOR/lệnh mới
+    //Chạy transfer thật ở THREAD PHỤ -> thread chính (đang đọc lệnh) rảnh ngay để nhận lệnh mới
     transferThread = thread([this, &s, dc, target]() {
         bool ok = dc->receiveFile(target.string()); //Server nhận dữ liệu từ Client
         s.setActiveDataChannel(nullptr);
@@ -253,20 +257,19 @@ string CommandHandler::handleStor(Session& s, const string& arg) {
         this->sendIntermediate(ok ? "226 Transfer complete\r\n" : "426 Connection closed, transfer aborted\r\n");
         });
 
-    return ""; // response thật (226/426) sẽ được thread phụ tự gửi
+    return ""; 
 }
 
 string CommandHandler::handleRetr(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
 
-    //Kiểm tra tồn tại
     string logical;
     fs::path target = resolvePath(s, arg, logical);
     if (target.empty() || !fs::exists(target) || !fs::is_regular_file(target))
         return format("550 File unavailable, {} not found\r\n", arg);
 
-    joinPreviousTransfer();
+    joinPreviousTransfer(); //Đảm bảo transfer trước đã kết thúc hẳn trước khi bắt đầu cái mới
 
     DataMode mode = s.getDataMode();
     // PASSIVE: server đã hẹn port trước (qua PASV) -> bind đúng port đó, chờ handshake để học địa chỉ client.
@@ -299,7 +302,6 @@ string CommandHandler::handleCwd(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
 
-    //Lấy đường dẫn ảo và thực tế mới
     string newLogical;
     fs::path physical = resolvePath(s, arg, newLogical);
 
@@ -316,7 +318,6 @@ string CommandHandler::handleMkd(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
 
-    //Lấy đường dẫn ảo và thực tế mới
     string newLogical;
     fs::path physical = resolvePath(s, arg, newLogical);
     if (physical.empty()) return "550 Invalid path\r\n";
@@ -332,7 +333,6 @@ string CommandHandler::handleRmd(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
 
-    //Lấy đường dẫn ảo và thực tế mới
     string logical;
     fs::path physical = resolvePath(s, arg, logical);
     if (physical.empty() || !fs::exists(physical) || !fs::is_directory(physical))
@@ -347,7 +347,6 @@ string CommandHandler::handleRmd(Session& s, const string& arg) {
 string CommandHandler::handleNlst(Session& s) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
 
-    //Lấy đường dẫn ảo và thực tế mới
     string logical;
     fs::path physical = resolvePath(s, "", logical);
     if (physical.empty() || !fs::exists(physical)) return "550 Directory not found\r\n";
@@ -361,7 +360,6 @@ string CommandHandler::handleNlst(Session& s) {
 string CommandHandler::handleList(Session& s) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
 
-    //Lấy đường dẫn ảo và thực tế mới
     string logical;
     fs::path physical = resolvePath(s, "", logical);
     if (physical.empty() || !fs::exists(physical))
@@ -389,7 +387,6 @@ string CommandHandler::handleStou(Session& s) {
     */
     string autoName = format("file_{}.dat", ms);
 
-    //Lấy đường dẫn ảo và thực tế mới
     string logical;
     fs::path target = resolvePath(s, autoName, logical);
     if (target.empty()) return "550 Invalid path\r\n";
@@ -445,7 +442,6 @@ string CommandHandler::handleDele(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
 
-    //Lấy đường dẫn ảo và thực tế mới
     string logical;
     fs::path target = resolvePath(s, arg, logical);
     if (target.empty() || !fs::exists(target) || !fs::is_regular_file(target))
@@ -461,7 +457,6 @@ string CommandHandler::handleRnfr(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
 
-    //Lấy đường dẫn ảo và thực tế mới
     string logical;
     fs::path target = resolvePath(s, arg, logical);
     if (target.empty() || !fs::exists(target))
@@ -492,8 +487,6 @@ string CommandHandler::handleRnto(Session& s, const string& arg) {
     return "250 Rename successful\r\n";
 }
 
-//===== Giai đoạn 5 =====
-
 string CommandHandler::handlePort(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
 
@@ -502,7 +495,7 @@ string CommandHandler::handlePort(Session& s, const string& arg) {
     stringstream ss(arg);
     string token;
     while (getline(ss, token, ',')) {
-        try { nums.push_back(std::stoi(token)); }
+        try { nums.push_back(stoi(token)); }
         catch (...) { return "501 Syntax error in parameters\r\n"; }
     }
     if (nums.size() != 6) return "501 Syntax error in parameters\r\n";
@@ -520,9 +513,11 @@ string CommandHandler::handlePasv(Session& s) {
 
     //Chọn port tuần tự có wrap-around trong dải 6000-6999, thread-safe vì nhiều client
     //(nhiều thread) có thể gọi PASV cùng lúc.
-    static std::atomic<unsigned short> nextPort{ 6000 };
+    static atomic<unsigned short> nextPort{ 6000 };
     unsigned short port = nextPort.fetch_add(1);
-    if (port > 6999) { nextPort.store(6000); port = 6000; }
+    if (port > 6999) { 
+        nextPort.store(6000); 
+        port = 6000; }
 
     s.setPassiveMode(port);
 
@@ -553,7 +548,6 @@ string CommandHandler::handleAbor(Session& s) {
     return "";
 }
 
-//Điều phối lệnh
 string CommandHandler::handle(Session& s, const string& com, const string& arg) {
     //Xử lý các lệnh không tồn tại
     FtpCommand fc = toFtpCommand(com);

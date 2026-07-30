@@ -4,7 +4,7 @@
 class DataChannel {
 private:
 	unsigned short udpPort;
-	std::atomic<SOCKET> udpSocket; // atomic: stop() (thread khác, do ABOR) có thể đóng socket an toàn
+	atomic<SOCKET> udpSocket; // atomic: stop() (thread khác, do ABOR) có thể đóng socket an toàn
 	// trong khi start()/receiveFile()/sendFile() đang chạy ở thread transfer
 public:
 	DataChannel(unsigned short);

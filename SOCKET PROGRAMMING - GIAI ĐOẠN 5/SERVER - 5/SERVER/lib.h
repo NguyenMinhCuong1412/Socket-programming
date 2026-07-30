@@ -18,16 +18,20 @@
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
 
-using std::cerr, std::cout,
+using std::cerr, std::cout, std::stoi,
 std::endl, std::format,
 std::string, std::istringstream,
 std::ostringstream, std::stringstream,
 std::ifstream, std::ofstream,
 std::toupper, std::ios, 
 std::tm, std::error_code,
-std::mutex, std::lock_guard,
-std::thread, std::vector,
-std::shared_ptr, std::make_shared;;
+std::mutex,                             //Ổ khóa nhị phân (0/1) đại diện cho tài nguyên chung
+std::lock_guard,                        //Bảo vệ tài nguyên chung không bị lấn chiếm, phải xếp hàng chờ 
+std::thread,                            //Tạo một Luồng chạy ngầm (Detached Thread) để xử lý kết nối từ một Client mới 
+std::vector,
+std::shared_ptr, 
+std::atomic,
+std::make_shared;
 
 namespace fs = std::filesystem;
 namespace chr = std::chrono;
@@ -37,8 +41,25 @@ constexpr unsigned short SERVER_DATA_PORT = 8081; //server bind cổng này đ�
 constexpr unsigned short CLIENT_DATA_PORT = 8082; //client bind cổng này để nhận RETR
 constexpr int CHUNK_SIZE = 1024;
 
-//Thư mục làm việc hiện tại lúc server khởi động (working directory của process).
+//Thư mục làm việc của Client lúc Server khởi động (working directory của process)
 inline const fs::path SERVER_ROOT = fs::current_path() / "server_root";
 
-//Tránh log của nhiều thread (nhiều client) in xen kẽ, lẫn lộn ra console
-inline mutex g_coutMutex;
+//Tránh truy cập của nhiều thread (nhiều client) in xen kẽ, lẫn lộn ra console
+inline mutex g_coutMutex; //g_: biến toàn cục
+
+//inline: tất cả các file dùng chung 1 biến này khi chương trình gộp các file để chạy
+
+//Phục vụ cho PORT/PASV
+enum class DataMode { NONE, ACTIVE, PASSIVE };
+
+//Giá trị cố định của các mã lệnh FTP
+enum class FtpCommand {
+    USER, PASS, QUIT, NOOP, PWD,
+    CWD, CDUP, MKD, RMD, LIST,
+    NLST, STAT, SIZE, MDTM, TYPE,
+    MODE, PORT, PASV, RETR, STOR,
+    STOU, APPE, DELE, RNFR, RNTO,
+    HASH, ABOR, HELP,
+
+    UNKNOWN
+};
