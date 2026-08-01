@@ -4,8 +4,7 @@
 void parseCmd(const string& raw, string& cmd, string& arg) {
     //Xử lý các kí tự có thể gây lỗi
     string clean = raw;
-    while (!clean.empty() && (clean.back() == '\r' || clean.back() == '\n'))
-        clean.pop_back();
+    while (!clean.empty() && (clean.back() == '\r' || clean.back() == '\n')) clean.pop_back();
 
     //Tách lệnh và đối số
     istringstream iss(clean);
@@ -57,8 +56,8 @@ void CommandHandler::sendIntermediate(const string& msg) { send(clientSocket, ms
 fs::path CommandHandler::resolvePath(const Session& s, const string& arg, string& outLogical) {
     //Xác định tính tuyệt đối/tương đối của filename
     fs::path logical = (!arg.empty() && arg[0] == '/')
-        ? fs::path(arg)                    //Đường dẫn tuyệt đối - đầy đủ bắt đầu từ gốc hệ thống tệp (root directory) cho đến vị trí tệp/thư mục trên ổ cứng
-        : fs::path(s.getDir()) / arg;      //Đường dẫn tương đối - dựa trên vị trí hiện tại của chương trình đang chạy
+        ? fs::path(arg)               //Đường dẫn tuyệt đối - đầy đủ bắt đầu từ gốc hệ thống tệp (root directory) cho đến vị trí tệp/thư mục trên ổ cứng
+        : fs::path(s.getDir()) / arg; //Đường dẫn tương đối - dựa trên vị trí hiện tại của chương trình đang chạy
 
     //Chuẩn hóa đường dẫn 
     //lexically_normal không cho ".." vượt quá root
@@ -78,7 +77,6 @@ fs::path CommandHandler::resolvePath(const Session& s, const string& arg, string
     return fs::weakly_canonical(SERVER_ROOT / relativePart); //weakly_canonical: OK cả khi path chưa tồn tại
 }
 
-//Chọn port server LẮNG NGHE cho lệnh UPLOAD (STOR/APPE/STOU): dùng port PASSIVE
 unsigned short CommandHandler::pickListenPort(Session& s) {
     return (s.getDataMode() == DataMode::PASSIVE) ? s.getPassivePort() : SERVER_DATA_PORT;
 }
@@ -203,8 +201,7 @@ string CommandHandler::handleMdtm(Session& s, const string& arg) {
     auto sctp = chr::clock_cast<chr::system_clock>(ftime); //Định dạng time_point: ép file_time_type về mốc lịch sử chung mà hàm C++ hiểu
     auto tt = chr::system_clock::to_time_t(sctp);          //Định dạng time_t: tổng giây từ 00:00:00 ngày 01/01/1970
 
-    tm time;  //struct tm - time: lưu trữ các thành phần thời gian
-    localtime_s(&time, &tt);
+    tm time; localtime_s(&time, &tt);
 
     return format("213 {:04}{:02}{:02}{:02}{:02}{:02}\r\n", //Định dạng YYYYMMDDhhmmss
         time.tm_year + 1900, time.tm_mon + 1, time.tm_mday,
@@ -221,7 +218,7 @@ string CommandHandler::handleStat(Session& s, const string& arg) {
             " Transfer mode: " + s.getMode() + "\r\n"
             "211 End of status\r\n";
     }
-    else {  //Trạng thái của file
+    else { //Trạng thái của file
         string logical;
         fs::path filePath = resolvePath(s, arg, logical);
         if (filePath.empty() || !fs::exists(filePath))
@@ -240,16 +237,15 @@ string CommandHandler::handleStor(Session& s, const string& arg) {
     fs::path target = resolvePath(s, arg, logical);
     if (target.empty()) return "550 Invalid path\r\n";
 
-    joinPreviousTransfer(); //Đảm bảo transfer trước đã kết thúc hẳn trước khi bắt đầu cái mới
+    joinPreviousTransfer();
 
-    //Khởi tạo kênh dữ liệu - UDP (Server nhận - Client gửi) - PASSIVE
+    //Khởi tạo kênh dữ liệu - UDP (Server nhận - Client gửi)
     auto dc = make_shared<DataChannel>(pickListenPort(s));
     if (!dc->start()) return "425 Can't open data connection\r\n";
-
-    sendIntermediate("150 File status okay, opening data connection\r\n"); //Gửi phản hồi xác nhận thành công
+    sendIntermediate("150 File status okay, opening data connection\r\n"); 
     s.setActiveDataChannel(dc.get()); //Đăng ký để ABOR (thread khác) có thể đóng socket này
 
-    //Chạy transfer thật ở THREAD PHỤ -> thread chính (đang đọc lệnh) rảnh ngay để nhận lệnh mới
+    //Chạy transfer thật ở luồng phụ -> luồng chính (đang đọc lệnh) rảnh ngay để nhận lệnh mới
     transferThread = thread([this, &s, dc, target]() {
         bool ok = dc->receiveFile(target.string()); //Server nhận dữ liệu từ Client
         s.setActiveDataChannel(nullptr);
@@ -269,18 +265,17 @@ string CommandHandler::handleRetr(Session& s, const string& arg) {
     if (target.empty() || !fs::exists(target) || !fs::is_regular_file(target))
         return format("550 File unavailable, {} not found\r\n", arg);
 
-    joinPreviousTransfer(); //Đảm bảo transfer trước đã kết thúc hẳn trước khi bắt đầu cái mới
+    joinPreviousTransfer();
 
     DataMode mode = s.getDataMode();
-    // PASSIVE: server đã hẹn port trước (qua PASV) -> bind đúng port đó, chờ handshake để học địa chỉ client.
-    // ACTIVE/NONE: server tự chọn port ngẫu nhiên (0), đích lấy từ PORT hoặc mặc định như GĐ4.
+    //PASSIVE: Server đã hẹn port trước (qua PASV) -> bind đúng port đó, chờ handshake để đọc địa chỉ Client.
+    //ACTIVE/NONE: Server tự chọn port ngẫu nhiên (0), đích lấy từ PORT hoặc mặc định
     unsigned short listenPort = (mode == DataMode::PASSIVE) ? s.getPassivePort() : 0;
 
     //Khởi tạo kênh dữ liệu - UDP (Server gửi - Client nhận)
     auto dc = make_shared<DataChannel>(listenPort);
     if (!dc->start()) return "425 Can't open data connection\r\n";
-
-    sendIntermediate("150 File status okay, opening data connection\r\n"); //Gửi phản hồi xác nhận thành công
+    sendIntermediate("150 File status okay, opening data connection\r\n"); 
     s.setActiveDataChannel(dc.get());
 
     string destIp = (mode == DataMode::ACTIVE) ? s.getActiveIp() : clientIp;
@@ -396,7 +391,6 @@ string CommandHandler::handleStou(Session& s) {
     //Khởi tạo kênh dữ liệu - UDP (Server nhận - Client gửi)
     auto dc = make_shared<DataChannel>(pickListenPort(s));
     if (!dc->start()) return "425 Can't open data connection\r\n";
-
     sendIntermediate(format("150 FILE: {}\r\n", autoName));  //Báo cho client biết tên file server đã chọn
     s.setActiveDataChannel(dc.get());
 
@@ -415,7 +409,6 @@ string CommandHandler::handleAppe(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
 
-    //Lấy đường dẫn ảo và thực tế mới
     string logical;
     fs::path target = resolvePath(s, arg, logical);
     if (target.empty()) return "550 Invalid path\r\n";

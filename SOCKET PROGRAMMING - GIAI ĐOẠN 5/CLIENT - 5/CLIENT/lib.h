@@ -18,9 +18,11 @@ std::endl, std::format,
 std::string, std::cin,
 std::stringstream, std::vector,
 std::ifstream, std::ofstream,
-std::toupper, std::ios;
+std::toupper, std::ios, std::atomic;
 
 constexpr unsigned short CONTROL_PORT = 8080;
 constexpr unsigned short SERVER_DATA_PORT = 8081; //server bind cổng này để nhận STOR
 constexpr unsigned short CLIENT_DATA_PORT = 8082; //client bind cổng này để nhận RETR
 constexpr int CHUNK_SIZE = 1024;
+
+enum class ClientDataMode { NONE, ACTIVE, PASSIVE };

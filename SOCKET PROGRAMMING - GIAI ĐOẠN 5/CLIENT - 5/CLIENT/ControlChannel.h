@@ -1,8 +1,6 @@
 #pragma once
 #include "lib.h"
 
-enum class ClientDataMode { NONE, ACTIVE, PASSIVE };
-
 class ControlChannel {
 private:
 	unsigned short serverTcpPort; //Port TCP của Server
@@ -10,9 +8,9 @@ private:
 	SOCKET tcpSocket;             //socket phục vụ kênh điều khiển - Client
 
 	// Trạng thái PORT/PASV - atomic vì được đọc/ghi từ CẢ 2 thread (bàn phím + nhận nền)
-	std::atomic<ClientDataMode> dataMode{ ClientDataMode::NONE };
-	std::atomic<unsigned short> myActivePort{ 0 };   // ACTIVE: port client tự bind (đã báo server qua PORT)
-	std::atomic<unsigned short> serverPasvPort{ 0 }; // PASSIVE: port server đã chọn (đọc từ phản hồi 227)
+	atomic<ClientDataMode> dataMode{ ClientDataMode::NONE };
+	atomic<unsigned short> myActivePort{ 0 };   // ACTIVE: port client tự bind (đã báo server qua PORT)
+	atomic<unsigned short> serverPasvPort{ 0 }; // PASSIVE: port server đã chọn (đọc từ phản hồi 227)
 
 	// Lệnh vừa gửi gần nhất - để thread nền biết cần làm STOR/RETR/... gì khi thấy "150"
 	std::mutex pendingMutex;

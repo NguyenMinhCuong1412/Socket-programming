@@ -2,28 +2,24 @@
 #include "lib.h"
 #include "DataChannel.h"
 
-//Phiên làm việc - mỗi Client có 1 đối tượng riêng (tạo trong thread riêng của Client đó)
+//Phiên làm việc - mỗi Client có phiên riêng độc lập
 class Session {
 private:
-	bool isLoggedIn;     //Đăng nhập
-	string userName;     //Tên
-	string currentDir;   //Thư mục làm việc hiện tại của Client trên Server
-	string dataType;     //Định dạng dữ liệu - A = ASCII, I = IMAGE/BINARY
-	string transferMode; //Cách truyền dữ liệu - S = STREAM, B = BLOCK, C = COMPRESSED
-	string renameFrom;   //Tên (logical) đang chờ RNTO hoàn tất; rỗng = không có RNFR đang chờ
-
-	DataMode dataMode;
-
-	string activeIp;            //ACTIVE: IP client gửi qua lệnh PORT
-	unsigned short activePort;  //ACTIVE: port client gửi qua lệnh PORT
-
-	unsigned short passivePort; //PASSIVE: port server tự chọn, đã thông báo qua PASV
-
-	mutex dcMutex;              //Mutex bảo vệ activeDataChannel (mutable để dùng được trong hàm const)
-	DataChannel* activeDataChannel;
+	bool isLoggedIn;                //Đăng nhập
+	string userName;                //Tên
+	string currentDir;              //Thư mục làm việc hiện tại của Client trên Server
+	string dataType;                //Định dạng dữ liệu - A = ASCII, I = IMAGE/BINARY
+	string transferMode;            //Cách truyền dữ liệu - S = STREAM, B = BLOCK, C = COMPRESSED
+	string renameFrom;              //Tên (logical) đang chờ RNTO hoàn tất; rỗng = không có RNFR đang chờ
+	DataMode dataMode;              //Chế độ truyền dữ liệu - ACTIVE = Client tự chọn port, PASSIVE = Server tự chọn port
+	string activeIp;                //ACTIVE: IP của Client gửi qua lệnh PORT
+	unsigned short activePort;      //ACTIVE: Port của Client gửi qua lệnh PORT
+	unsigned short passivePort;     //PASSIVE: Port của Server tự chọn
+	mutex dcMutex;                  //Mutex bảo vệ activeDataChannel, tránh crash giữa 2 luồng chính và phụ/crash giữa 2 luồng phụ cùng Session
+	DataChannel* activeDataChannel; //Điều khiển kênh dữ liệu của riêng từng Client - luồng phụ
 public:
 	Session();
-	~Session();
+	~Session(); //Dọn dẹp DataChannel nếu Session bị hủy mà kênh chưa đóng
 
 	bool getLoggedIn() const { return this->isLoggedIn; }
 	string getUserName() const { return this->userName; }

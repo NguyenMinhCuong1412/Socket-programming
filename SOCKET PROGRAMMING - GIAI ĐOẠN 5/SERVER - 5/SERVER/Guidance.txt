@@ -1,6 +1,0 @@
-WSADATA
-WSAStartup
-WSACleanup
-
-std::error_code
-std::filesystem::create_directories

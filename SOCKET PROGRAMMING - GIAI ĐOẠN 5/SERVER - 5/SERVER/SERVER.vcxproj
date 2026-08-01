@@ -154,9 +154,6 @@
     <ClInclude Include="lib.h" />
     <ClInclude Include="Session.h" />
   </ItemGroup>
-  <ItemGroup>
-    <Text Include="Guidance.txt" />
-  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
