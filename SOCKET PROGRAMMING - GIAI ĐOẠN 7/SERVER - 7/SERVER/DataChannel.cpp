@@ -1,8 +1,18 @@
 #include "DataChannel.h"
+#include <chrono>
 
 DataChannel::DataChannel(unsigned short port) {
 	this->udpPort = port;
 	this->udpSocket.store(INVALID_SOCKET);
+}
+
+unsigned short DataChannel::getBoundPort() const {
+	SOCKET s = udpSocket.load();
+	if (s == INVALID_SOCKET) return 0;
+	sockaddr_in local;
+	int len = sizeof(local);
+	if (getsockname(s, (sockaddr*)&local, &len) == SOCKET_ERROR) return 0;
+	return ntohs(local.sin_port);
 }
 
 bool DataChannel::start() {
@@ -26,124 +36,129 @@ bool DataChannel::start() {
 		return false;
 	}
 
-	//Lưu socket vào atomic variable để các thread khác có thể truy cập và đóng an toàn
-	this->udpSocket.store(s);
+	this->udpSocket.store(s); //Lưu socket vào atomic variable để các thread khác có thể truy cập và đóng an toàn
 	return true;
 }
 
-// ============================================================
-// rdtSend — Gửi dữ liệu qua Stop-and-Wait ARQ
-//
-// Luồng:
-//   1. Chia data thành các chunk ≤ RDT_MAX_PAYLOAD
-//   2. Với mỗi chunk: tạo DATA packet → serialize → sendto → chờ ACK
-//      - Nếu ACK đúng seq → chunk kế
-//      - Nếu timeout → retransmit (tối đa RDT_MAX_RETRIES)
-//      - Nếu ACK sai seq/checksum → bỏ qua, chờ tiếp
-//   3. Sau khi gửi hết data: gửi FIN → chờ ACK cho FIN
-// ============================================================
 bool DataChannel::rdtSend(SOCKET s, const char* data, int len, const sockaddr_in& dest) {
-	uint32_t seqNum = 0;
-	int offset = 0;
-
-	// ----- Thiết lập timeout cho socket (dùng cho recvfrom chờ ACK) -----
-	int timeout = RDT_TIMEOUT_MS;
-	setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
-
-	// ===== PHASE 1: Gửi từng chunk DATA =====
-	while (offset < len) {
-		// Tính kích thước chunk hiện tại
+	uint32_t totalChunks = (len <= 0) ? 0 : (uint32_t)((len + RDT_MAX_PAYLOAD - 1) / RDT_MAX_PAYLOAD);
+	vector<vector<char>> serializedPkts(totalChunks);
+	for (uint32_t i = 0; i < totalChunks; i++) {
+		int offset = (int)i * RDT_MAX_PAYLOAD;
 		int chunkSize = min(RDT_MAX_PAYLOAD, len - offset);
 
-		// Tạo DATA packet
 		RdtPacket pkt;
-		pkt.seqNum = seqNum;
+		pkt.seqNum = i;
 		pkt.flags = FLAG_DATA;
 		pkt.checksum = 0;
 		pkt.payloadLength = (uint16_t)chunkSize;
 		pkt.payload.assign(data + offset, data + offset + chunkSize);
-
-		// Serialize packet
-		std::vector<char> rawPkt = serializePacket(pkt);
-
-		bool acked = false;
-		for (int retry = 0; retry < RDT_MAX_RETRIES; retry++) {
-			// Giả lập mất gói khi gửi
-			if (!shouldSimulateLoss()) {
-				int sent = sendto(s, rawPkt.data(), (int)rawPkt.size(), 0,
-					(const sockaddr*)&dest, sizeof(dest));
-				if (sent == SOCKET_ERROR) {
-					cerr << "[RDT] sendto() failed (WSA error: " << WSAGetLastError() << ")" << endl;
-					return false;
-				}
-			}
-			else {
-				cout << "[RDT-SIM] Dropped outgoing DATA packet seq=" << seqNum << endl;
-			}
-
-			// Chờ ACK
-			char ackBuf[RDT_HEADER_SIZE + 64]; // ACK không có payload lớn
-			sockaddr_in ackFrom;
-			int ackFromLen = sizeof(ackFrom);
-
-			int ackLen = recvfrom(s, ackBuf, sizeof(ackBuf), 0,
-				(sockaddr*)&ackFrom, &ackFromLen);
-
-			if (ackLen == SOCKET_ERROR) {
-				int err = WSAGetLastError();
-				if (err == WSAETIMEDOUT) {
-					// Timeout → retransmit
-					cout << "[RDT] Timeout waiting for ACK seq=" << seqNum
-						<< ", retransmit (" << (retry + 1) << "/" << RDT_MAX_RETRIES << ")" << endl;
-					continue;
-				}
-				else {
-					// Lỗi thật (socket bị đóng bởi ABOR, v.v.)
-					return false;
-				}
-			}
-
-			// Giả lập mất gói khi nhận ACK
-			if (shouldSimulateLoss()) {
-				cout << "[RDT-SIM] Dropped incoming ACK" << endl;
-				continue;
-			}
-
-			// Deserialize ACK
-			RdtPacket ackPkt;
-			if (!deserializePacket(ackBuf, ackLen, ackPkt)) {
-				// Checksum lỗi hoặc packet hỏng → bỏ qua, chờ tiếp
-				cout << "[RDT] Received corrupted ACK, ignoring" << endl;
-				continue;
-			}
-
-			// Kiểm tra ACK đúng seq
-			if ((ackPkt.flags & FLAG_ACK) && ackPkt.seqNum == seqNum) {
-				acked = true;
-				break; // Chuyển sang chunk kế tiếp
-			}
-			// ACK sai seq → bỏ qua, chờ tiếp (vẫn trong vòng retry)
-		}
-
-		if (!acked) {
-			cerr << "[RDT] Max retries reached for DATA seq=" << seqNum << ", transfer failed" << endl;
-			return false;
-		}
-
-		// Chuyển sang chunk tiếp theo
-		offset += chunkSize;
-		seqNum ^= 1; // Đổi sequence number (0 ↔ 1)
+		serializedPkts[i] = serializePacket(pkt);
 	}
 
-	// ===== PHASE 2: Gửi FIN =====
+	// Dùng timeout NGẮN (poll) cho recvfrom(): vừa cho phép vòng lặp gửi thêm gói mới trong cửa sổ,
+	// vừa tự đo thời gian thật (steady_clock) để quyết định khi nào gói "base" thực sự quá hạn.
+	int pollTimeout = RDT_POLL_MS;
+	setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&pollTimeout, sizeof(pollTimeout));
+
+	uint32_t base = 0;                 // Gói CŨ NHẤT chưa được ACK (biên trái cửa sổ)
+	uint32_t nextSeq = 0;              // Gói kế tiếp CHƯA từng gửi (biên phải cửa sổ)
+	int window = RDT_INITIAL_WINDOW;   // Kích thước cửa sổ hiện tại (điều chỉnh theo AIMD)
+	int retryRounds = 0;               // Số vòng Go-Back-N đã kích hoạt (để giới hạn RDT_MAX_RETRIES)
+	bool timerRunning = false;
+	std::chrono::steady_clock::time_point timerStart;
+
+	// ===== PHASE 1: Gửi toàn bộ chunk DATA qua Go-Back-N =====
+	while (base < totalChunks) {
+		// --- Gửi thêm gói mới miễn còn nằm trong giới hạn cửa sổ ---
+		while (nextSeq < totalChunks && nextSeq < base + (uint32_t)window) {
+			if (!shouldSimulateLoss()) {
+				sendto(s, serializedPkts[nextSeq].data(), (int)serializedPkts[nextSeq].size(), 0,
+					(const sockaddr*)&dest, sizeof(dest));
+			}
+			else {
+				cout << "[RDT-SIM] Dropped outgoing DATA packet seq=" << nextSeq << endl;
+			}
+			nextSeq++;
+		}
+
+		// --- (Khởi động lại) timer nếu còn gói chưa được ACK và chưa có timer nào đang chạy ---
+		// Timer LUÔN đại diện cho gói "base" hiện tại — mỗi khi base trượt, timer phải reset.
+		if (!timerRunning && base < nextSeq) {
+			timerStart = std::chrono::steady_clock::now();
+			timerRunning = true;
+		}
+
+		// --- Chờ ACK, poll ngắn mỗi vòng ---
+		char ackBuf[RDT_HEADER_SIZE + 64];
+		sockaddr_in ackFrom;
+		int ackFromLen = sizeof(ackFrom);
+		int ackLen = recvfrom(s, ackBuf, sizeof(ackBuf), 0, (sockaddr*)&ackFrom, &ackFromLen);
+
+		if (ackLen == SOCKET_ERROR) {
+			int err = WSAGetLastError();
+			if (err != WSAETIMEDOUT) return false; // Lỗi thật (socket bị đóng bởi ABOR, v.v.)
+			// Hết 1 chu kỳ poll mà chưa có ACK nào — sẽ kiểm tra timeout thật bên dưới
+		}
+		else if (shouldSimulateLoss()) {
+			cout << "[RDT-SIM] Dropped incoming ACK" << endl;
+		}
+		else {
+			RdtPacket ackPkt;
+			if (deserializePacket(ackBuf, ackLen, ackPkt) && (ackPkt.flags & FLAG_ACK)) {
+				// Cumulative ACK: ackPkt.seqNum = seq lớn nhất bên nhận đã nhận LIÊN TỤC.
+				// Giá trị 0xFFFFFFFF là quy ước "receiver chưa nhận được gói nào hợp lệ".
+				if (ackPkt.seqNum != 0xFFFFFFFFu && ackPkt.seqNum + 1 > base) {
+					base = ackPkt.seqNum + 1;                        // Trượt cửa sổ tới
+					window = min(window + 1, RDT_MAX_WINDOW);        // Additive Increase
+					retryRounds = 0;                                 // Có tiến triển → reset bộ đếm lỗi
+					timerRunning = false;                            // Sẽ tự khởi động lại ở vòng lặp kế nếu cần
+				}
+				// ACK cũ/trùng lặp (không vượt qua base hiện tại) → bỏ qua
+			}
+			// Gói lỗi checksum hoặc không phải ACK → bỏ qua, chờ tiếp
+		}
+
+		// --- Kiểm tra timeout THẬT của gói "base" (dùng đồng hồ thật, độc lập với SO_RCVTIMEO) ---
+		if (timerRunning) {
+			auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+				std::chrono::steady_clock::now() - timerStart).count();
+			if (elapsedMs >= RDT_TIMEOUT_MS) {
+				retryRounds++;
+				if (retryRounds > RDT_MAX_RETRIES) {
+					cerr << "[RDT] Max Go-Back-N retries reached at base=" << base << ", transfer failed" << endl;
+					return false;
+				}
+				window = max(window / 2, RDT_MIN_WINDOW); // Multiplicative Decrease
+				cout << "[RDT] Timeout on base seq=" << base << ", Go-Back-N retransmit ["
+					<< base << ".." << (nextSeq - 1) << "], new window=" << window
+					<< " (" << retryRounds << "/" << RDT_MAX_RETRIES << ")" << endl;
+
+				// Đặc trưng Go-Back-N: gửi lại TOÀN BỘ cửa sổ hiện có, không chỉ 1 gói
+				for (uint32_t i = base; i < nextSeq; i++) {
+					if (!shouldSimulateLoss()) {
+						sendto(s, serializedPkts[i].data(), (int)serializedPkts[i].size(), 0,
+							(const sockaddr*)&dest, sizeof(dest));
+					}
+				}
+				timerStart = std::chrono::steady_clock::now();
+				timerRunning = true;
+			}
+		}
+	}
+
+	// ===== PHASE 2: Gửi FIN (Stop-and-Wait đơn giản, chỉ 1 gói duy nhất) =====
 	{
 		RdtPacket finPkt;
-		finPkt.seqNum = seqNum;
+		finPkt.seqNum = totalChunks; // Báo cho receiver: "tổng cộng đã gửi totalChunks gói DATA"
 		finPkt.flags = FLAG_FIN;
 		finPkt.checksum = 0;
 		finPkt.payloadLength = 0;
-
 		std::vector<char> rawFin = serializePacket(finPkt);
+
+		// Khôi phục timeout bình thường (không cần poll ngắn nữa vì FIN chỉ có 1 gói, không có cửa sổ)
+		int timeout = RDT_TIMEOUT_MS;
+		setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
 
 		bool finAcked = false;
 		for (int retry = 0; retry < RDT_MAX_RETRIES; retry++) {
@@ -153,41 +168,27 @@ bool DataChannel::rdtSend(SOCKET s, const char* data, int len, const sockaddr_in
 				if (sent == SOCKET_ERROR) return false;
 			}
 			else {
-				cout << "[RDT-SIM] Dropped outgoing FIN packet seq=" << seqNum << endl;
+				cout << "[RDT-SIM] Dropped outgoing FIN packet seq=" << totalChunks << endl;
 			}
 
-			// Chờ ACK cho FIN
 			char ackBuf[RDT_HEADER_SIZE + 64];
 			sockaddr_in ackFrom;
 			int ackFromLen = sizeof(ackFrom);
-
-			int ackLen = recvfrom(s, ackBuf, sizeof(ackBuf), 0,
-				(sockaddr*)&ackFrom, &ackFromLen);
+			int ackLen = recvfrom(s, ackBuf, sizeof(ackBuf), 0, (sockaddr*)&ackFrom, &ackFromLen);
 
 			if (ackLen == SOCKET_ERROR) {
 				int err = WSAGetLastError();
 				if (err == WSAETIMEDOUT) {
-					cout << "[RDT] Timeout waiting for FIN-ACK seq=" << seqNum
-						<< ", retransmit (" << (retry + 1) << "/" << RDT_MAX_RETRIES << ")" << endl;
+					cout << "[RDT] Timeout waiting for FIN-ACK, retransmit (" << (retry + 1) << "/" << RDT_MAX_RETRIES << ")" << endl;
 					continue;
 				}
-				else {
-					return false;
-				}
+				return false;
 			}
-
-			if (shouldSimulateLoss()) {
-				cout << "[RDT-SIM] Dropped incoming FIN-ACK" << endl;
-				continue;
-			}
+			if (shouldSimulateLoss()) { cout << "[RDT-SIM] Dropped incoming FIN-ACK" << endl; continue; }
 
 			RdtPacket ackPkt;
 			if (!deserializePacket(ackBuf, ackLen, ackPkt)) continue;
-
-			if ((ackPkt.flags & FLAG_ACK) && ackPkt.seqNum == seqNum) {
-				finAcked = true;
-				break;
-			}
+			if ((ackPkt.flags & FLAG_ACK) && ackPkt.seqNum == totalChunks) { finAcked = true; break; }
 		}
 
 		if (!finAcked) {
@@ -200,26 +201,21 @@ bool DataChannel::rdtSend(SOCKET s, const char* data, int len, const sockaddr_in
 }
 
 // ============================================================
-// rdtReceive — Nhận dữ liệu qua Stop-and-Wait ARQ
+// rdtReceive — Nhận dữ liệu qua Go-Back-N (nhận NGHIÊM NGẶT theo thứ tự + cumulative ACK)
 //
-// Luồng:
-//   1. Vòng lặp recvfrom()
-//   2. Deserialize + kiểm tra checksum
-//      - Checksum sai → DROP, không ACK
-//   3. Nếu FIN → gửi ACK → break
-//   4. Nếu DATA:
-//      - seq == expectedSeq → deliver (append vào outData) → đổi expectedSeq
-//      - seq != expectedSeq → duplicate, không deliver
-//      - Gửi ACK(seq nhận được) trong cả 2 trường hợp
-//
-// Return: tổng byte nhận được, -1 nếu lỗi
+// Khác Stop-and-Wait cũ (chỉ cần theo dõi 1 bit 0/1):
+//   - Chỉ giao (deliver) đúng 1 gói kế tiếp theo thứ tự (expectedSeq); gói đến SỚM hơn dự kiến
+//     (out-of-order) bị LOẠI BỎ hoàn toàn, không đệm lại — đây là đặc trưng của Go-Back-N
+//     (khác Selective Repeat, vốn phải đệm gói ngoài thứ tự để tránh gửi lại toàn bộ cửa sổ).
+//   - Luôn trả lời bằng CUMULATIVE ACK = expectedSeq-1 (số thứ tự lớn nhất đã nhận liên tục),
+//     bất kể gói vừa nhận đúng thứ tự, trùng lặp, hay đến sớm — nhờ vậy sender biết chính xác
+//     cần Go-Back-N từ đâu khi timeout.
 // ============================================================
 int DataChannel::rdtReceive(SOCKET s, std::vector<char>& outData, sockaddr_in& senderAddr) {
 	uint32_t expectedSeq = 0;
 	outData.clear();
 
-	// Thiết lập timeout dài hơn cho receiver (chờ data từ sender)
-	// Dùng timeout lớn vì sender sẽ retransmit nếu ACK mất
+	// Timeout dài cho receiver (chờ hoạt động từ sender) — sender sẽ Go-Back-N nếu ACK bị mất
 	int timeout = RDT_TIMEOUT_MS * (RDT_MAX_RETRIES + 1);
 	setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
 
@@ -236,69 +232,76 @@ int DataChannel::rdtReceive(SOCKET s, std::vector<char>& outData, sockaddr_in& s
 				cerr << "[RDT] Receiver timeout — sender may have disconnected" << endl;
 				return -1;
 			}
-			// Socket bị đóng (ABOR) hoặc lỗi thật
-			return -1;
+			return -1; // Socket bị đóng (ABOR) hoặc lỗi thật
 		}
 		if (byteRecv == 0) continue; // Gói rỗng bất thường → bỏ qua
 
-		// Giả lập mất gói khi nhận
 		if (shouldSimulateLoss()) {
 			cout << "[RDT-SIM] Dropped incoming packet (" << byteRecv << " bytes)" << endl;
 			continue;
 		}
 
-		// Deserialize packet
 		RdtPacket pkt;
 		if (!deserializePacket(recvBuf, byteRecv, pkt)) {
-			// Checksum sai hoặc packet hỏng → DROP, KHÔNG gửi ACK
 			cout << "[RDT] Received corrupted packet, dropping (no ACK)" << endl;
 			continue;
 		}
 
 		// ----- Xử lý FIN -----
 		if (pkt.flags & FLAG_FIN) {
-			// Gửi ACK cho FIN
-			RdtPacket ackPkt;
-			ackPkt.seqNum = pkt.seqNum;
-			ackPkt.flags = FLAG_ACK;
-			ackPkt.checksum = 0;
-			ackPkt.payloadLength = 0;
-			std::vector<char> rawAck = serializePacket(ackPkt);
-
-			sendto(s, rawAck.data(), (int)rawAck.size(), 0,
-				(const sockaddr*)&senderAddr, sizeof(senderAddr));
-
-			break; // Kết thúc nhận
+			if (pkt.seqNum == expectedSeq) {
+				// Đúng: đã nhận đủ toàn bộ DATA (expectedSeq == tổng số chunk sender đã gửi) → xác nhận và kết thúc
+				RdtPacket ackPkt;
+				ackPkt.seqNum = pkt.seqNum;
+				ackPkt.flags = FLAG_ACK;
+				ackPkt.checksum = 0;
+				ackPkt.payloadLength = 0;
+				std::vector<char> rawAck = serializePacket(ackPkt);
+				sendto(s, rawAck.data(), (int)rawAck.size(), 0, (const sockaddr*)&senderAddr, sizeof(senderAddr));
+				break;
+			}
+			else {
+				// FIN đến khi còn thiếu dữ liệu ở giữa (bất thường/trùng) → bỏ qua, tiếp tục chờ DATA còn thiếu
+				cout << "[RDT] Premature/duplicate FIN (seq=" << pkt.seqNum << ", expected=" << expectedSeq << "), ignoring" << endl;
+				continue;
+			}
 		}
 
 		// ----- Xử lý DATA -----
 		if (pkt.flags & FLAG_DATA) {
 			if (pkt.seqNum == expectedSeq) {
-				// Gói mới → deliver (append vào buffer)
+				// Đúng thứ tự → deliver
 				outData.insert(outData.end(), pkt.payload.begin(), pkt.payload.end());
-				expectedSeq ^= 1; // Đổi expected sequence (0 ↔ 1)
+				expectedSeq++;
+			}
+			else if (pkt.seqNum < expectedSeq) {
+				// Gói trùng lặp (đã nhận trước đó) → không deliver lại, chỉ re-ACK
+				cout << "[RDT] Duplicate DATA seq=" << pkt.seqNum
+					<< " (already have up to " << (expectedSeq - 1) << "), re-ACK" << endl;
 			}
 			else {
-				// Gói duplicate → không deliver, nhưng vẫn ACK
-				cout << "[RDT] Duplicate DATA seq=" << pkt.seqNum
-					<< " (expected " << expectedSeq << "), ACK but no deliver" << endl;
+				// Gói đến SỚM hơn dự kiến (ngoài thứ tự) → Go-Back-N: LOẠI BỎ, không đệm lại
+				cout << "[RDT] Out-of-order DATA seq=" << pkt.seqNum
+					<< " (expected " << expectedSeq << "), discarding (Go-Back-N)" << endl;
 			}
 
-			// Gửi ACK (cả trường hợp đúng seq lẫn duplicate)
+			// Luôn gửi CUMULATIVE ACK = expectedSeq-1 (số thứ tự lớn nhất đã nhận LIÊN TỤC).
+			// Nếu expectedSeq == 0 (chưa nhận đúng thứ tự gói nào) thì dùng giá trị đặc biệt
+			// 0xFFFFFFFF để báo "chưa có gì được nhận" (tránh underflow uint32_t).
+			uint32_t cumulativeAck = (expectedSeq == 0) ? 0xFFFFFFFFu : (expectedSeq - 1);
 			RdtPacket ackPkt;
-			ackPkt.seqNum = pkt.seqNum; // ACK theo seq nhận được
+			ackPkt.seqNum = cumulativeAck;
 			ackPkt.flags = FLAG_ACK;
 			ackPkt.checksum = 0;
 			ackPkt.payloadLength = 0;
 			std::vector<char> rawAck = serializePacket(ackPkt);
 
-			// Giả lập mất gói khi gửi ACK
 			if (!shouldSimulateLoss()) {
 				sendto(s, rawAck.data(), (int)rawAck.size(), 0,
 					(const sockaddr*)&senderAddr, sizeof(senderAddr));
 			}
 			else {
-				cout << "[RDT-SIM] Dropped outgoing ACK seq=" << pkt.seqNum << endl;
+				cout << "[RDT-SIM] Dropped outgoing ACK seq=" << cumulativeAck << endl;
 			}
 		}
 	}

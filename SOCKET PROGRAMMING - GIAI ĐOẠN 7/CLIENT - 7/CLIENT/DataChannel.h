@@ -28,6 +28,7 @@ public:
 	~DataChannel() = default;
 
 	bool start();
+	unsigned short getBoundPort() const; //Trả về cổng UDP thực tế đã bind (dùng khi bind với port=0 để OS tự cấp phát ngẫu nhiên)
 	bool receiveFile(const string&, bool = false);
 	bool sendFile(const string&, const string&, unsigned short);
 

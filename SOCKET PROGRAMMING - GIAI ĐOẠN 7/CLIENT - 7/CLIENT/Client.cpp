@@ -10,7 +10,7 @@ int main() {
     }
 
     //Khởi tạo kênh điều khiển - TCP
-    ControlChannel control(CONTROL_PORT, "127.0.0.1");
+    ControlChannel control(CONTROL_PORT, "10.124.7.103");
     if (!control.start()) {
         WSACleanup();
         return 1;

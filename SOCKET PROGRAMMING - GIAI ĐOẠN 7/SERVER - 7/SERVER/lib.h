@@ -32,15 +32,19 @@ std::mutex,                             //Ổ khóa nhị phân (0/1) đại di�
 std::lock_guard,                        //Bảo vệ tài nguyên chung không bị lấn chiếm, phải xếp hàng chờ 
 std::thread,                            //Tạo một Luồng chạy ngầm (Detached Thread) để xử lý kết nối từ một Client mới 
 std::shared_ptr,                        //Smart Pointer: quản lý vòng đời của đối tượng (Object Lifetime) và cho phép nhiều con trỏ trỏ đến cùng một đối tượng trong bộ nhớ Heap, tránh rò rỉ bộ nhớ
-std::make_shared,                       //Tạo một đối tượng trong bộ nhớ Heap và trả về một con trỏ thông minh (Smart Pointer) trỏ đến đối tượng đó, quản lý vòng đời của đối tượng
+std::make_shared,                       //Tạo một đối tượng trong 1 vùng bộ nhớ Heap và trả về một con trỏ thông minh (Smart Pointer) trỏ đến đối tượng đó, quản lý vòng đời của đối tượng
 std::atomic;                            
 
 namespace fs = std::filesystem;
 namespace chr = std::chrono;
 
+// Chỉ CONTROL_PORT cần cố định: đây là cổng "well-known" duy nhất mà Client PHẢI biết trước
+// để mở kết nối TCP ban đầu (không có kênh nào khác để server báo trước cổng này).
+// Cổng dữ liệu UDP cho STOR/APPE/STOU (trước là SERVER_DATA_PORT=8081) và cho RETR khi Client
+// không dùng PORT/PASV (trước là CLIENT_DATA_PORT=8082) giờ đã chuyển sang NGẪU NHIÊN do OS cấp
+// (bind port=0) và được thông báo qua kênh điều khiển (xem CmdHandler::appendPortIfNeeded và
+// ControlChannel::autoNegotiateActivePort bên Client) thay vì cố định cứng trong code.
 constexpr unsigned short CONTROL_PORT = 8080;     //Server bind cổng cố định để nhận lệnh FTP từ Client - 21
-constexpr unsigned short SERVER_DATA_PORT = 8081; //Server bind cổng này để gửi dữ liệu tới Client (STOR/APPE/STOU) - 20
-constexpr unsigned short CLIENT_DATA_PORT = 8082; //Client bind cổng này để nhận dữ liệu từ Server (RETR)
 constexpr int CHUNK_SIZE = 1024;
 
 //Thư mục làm việc của Client lúc Server khởi động (working directory của process)

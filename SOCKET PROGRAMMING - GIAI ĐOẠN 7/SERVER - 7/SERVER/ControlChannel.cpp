@@ -13,18 +13,17 @@ void ControlChannel::handleClient(SOCKET clientSocket, string clientIp) {
     string greeting = "220 Service ready\r\n";
     send(clientSocket, greeting.c_str(), (int)greeting.size(), 0);
 
-    //Khởi tạo phiên làm việc và công cụ xử lý lệnh riêng cho Client
+    //Khởi tạo phiên làm việc và công cụ xử lý lệnh riêng cho Client-TCP
     Session session;
     CommandHandler handler;
     handler.setControlSocket(clientSocket);
     handler.setClientIp(clientIp);
-    char buffer[1024] = { 0 };  //Khởi tạo vùng nhớ cố định 
+    char buffer[1024] = { 0 }; //Khởi tạo vùng nhớ cố định 
 
     while (true) {
-        //Làm sạch vùng nhớ nhận lệnh
-        ZeroMemory(buffer, sizeof(buffer));
+        ZeroMemory(buffer, sizeof(buffer)); //Làm sạch vùng nhớ nhận lệnh
 
-        //Đọc dữ liệu từ Socket do Client gửi và kiểm tra
+        //Đọc dữ liệu từ socket do Client-TCP gửi và kiểm tra
         int byteRecv = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
         if (byteRecv == 0) {
             lock_guard<mutex> lock(g_coutMutex);
@@ -54,12 +53,11 @@ void ControlChannel::handleClient(SOCKET clientSocket, string clientIp) {
         if (command == "QUIT") break;
     }
 
-    //Đóng riêng Client muốn thoát
-    closesocket(clientSocket);
+    closesocket(clientSocket); //Đóng riêng Client-TCP muốn thoát
 }
 
 ControlChannel::ControlChannel(unsigned short port) {
-    this->tcpPort = port;
+	this->tcpPort = port;            //CONTROL_PORT = 8080
     this->tcpSocket = INVALID_SOCKET;
 }
 
@@ -99,15 +97,14 @@ bool ControlChannel::start() {
 
 void ControlChannel::run() {
     while (true) {
-        //Lấy thông tin Client được accept: các thông tin mạng + độ lớn vùng nhớ của Client 
+        //Lấy thông tin Client-TCP được accept: các thông tin mạng + độ lớn vùng nhớ của Client-TCP 
         sockaddr_in clientAddr;
         int clientAddrLen = sizeof(clientAddr);
 
         //Accept Client-TCP
         SOCKET clientSocket = accept(this->tcpSocket, (sockaddr*)&clientAddr, &clientAddrLen);
         if (clientSocket == INVALID_SOCKET) {
-            //tcpSocket đã bị stop() đóng (server đang tắt) -> thoát
-            if (this->tcpSocket == INVALID_SOCKET) break;
+            if (this->tcpSocket == INVALID_SOCKET) break; //tcpSocket đã bị stop() đóng (server đang tắt) -> thoát
             cerr << format("421 Service not available, accept failed (WSA error: {})", WSAGetLastError()) << endl;
             continue; //1 client accept lỗi không làm sập cả server
         }

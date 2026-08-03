@@ -79,12 +79,30 @@ fs::path CommandHandler::resolvePath(const Session& s, const string& arg, string
 }
 
 unsigned short CommandHandler::pickListenPort(Session& s) {
-    return (s.getDataMode() == DataMode::PASSIVE) ? s.getPassivePort() : SERVER_DATA_PORT;
+    //Passive mode: cổng đã được chọn trước và gửi cho Client-TCP qua reply 227 (PASV) -> phải cố định lúc này
+    //Các trường hợp còn lại (Active/None): server không có kênh nào báo cổng trước cho Client-TCP,
+    //nên để OS tự cấp phát ngẫu nhiên (bind port=0), rồi thông báo cổng thật qua reply "150"
+    return (s.getDataMode() == DataMode::PASSIVE) ? s.getPassivePort() : 0;
+}
+
+string CommandHandler::appendPortIfNeeded(Session& s, unsigned short boundPort, const string& baseMsg) {
+    //PASSIVE: Client-TCP đã biết chính xác port qua reply 227 (PASV) từ trước -> không cần lặp lại
+    if (s.getDataMode() == DataMode::PASSIVE) return baseMsg;
+
+    //ACTIVE/NONE: Server vừa bind một cổng NGẪU NHIÊN do OS cấp 
+    //-> phải báo cho Client biết cổng thật này để Client gửi/nhận dữ liệu đúng chỗ
+    //Chèn " PORT=<n>" ngay trước "\r\n" để giữ nguyên định dạng reply FTP chuẩn ở đầu dòng.
+    string msg = baseMsg;
+    size_t pos = msg.rfind("\r\n");
+    string suffix = format(" PORT={}", boundPort);
+    if (pos != string::npos) msg.insert(pos, suffix);
+    else msg += suffix;
+    return msg;
 }
 
 CommandHandler::CommandHandler() {
-    this->clientSocket = INVALID_SOCKET;
     this->clientIp = "";
+    this->clientSocket = INVALID_SOCKET;
 }
 
 CommandHandler::~CommandHandler() { joinPreviousTransfer(); }
@@ -110,11 +128,7 @@ string CommandHandler::handlePwd(Session& s) {
 string CommandHandler::handleNoop() { return "200 NOOP OK\r\n"; }
 
 string CommandHandler::handleQuit() {
-    // LỖI CŨ: QUIT trả lời ngay rồi ControlChannel đóng socket lập tức. Nếu STOR/RETR/APPE/STOU
-    // vẫn còn chạy ở transferThread, câu trả lời "226 Transfer complete"/"426 ..." của nó gửi
-    // SAU khi socket đã đóng sẽ bị mất (send() thất bại âm thầm), client không biết transfer
-    // thành công hay không. Sửa: chờ transfer hiện tại (nếu có) xong hẳn rồi mới trả "221 Goodbye".
-    joinPreviousTransfer();
+	joinPreviousTransfer(); //Kiểm tra luồng phụ còn hoạt động, nếu có thì chờ xong xuôi
     return "221 Goodbye\r\n";
 }
 
@@ -251,7 +265,7 @@ string CommandHandler::handleStor(Session& s, const string& arg) {
     //Khởi tạo kênh dữ liệu - UDP (Server nhận - Client gửi)
     auto dc = make_shared<DataChannel>(pickListenPort(s));
     if (!dc->start()) return "425 Can't open data connection\r\n";
-    sendIntermediate("150 File status okay, opening data connection\r\n"); 
+    sendIntermediate(appendPortIfNeeded(s, dc->getBoundPort(), "150 File status okay, opening data connection\r\n"));
     s.setActiveDataChannel(dc.get()); //Đăng ký để ABOR (thread khác) có thể đóng socket này
 
     //Chạy transfer thật ở luồng phụ -> luồng chính (đang đọc lệnh) rảnh ngay để nhận lệnh mới
@@ -277,8 +291,10 @@ string CommandHandler::handleRetr(Session& s, const string& arg) {
     joinPreviousTransfer();
 
     DataMode mode = s.getDataMode();
-    //PASSIVE: Server đã hẹn port trước (qua PASV) -> bind đúng port đó, chờ handshake để đọc địa chỉ Client.
-    //ACTIVE/NONE: Server tự chọn port ngẫu nhiên (0), đích lấy từ PORT hoặc mặc định
+    if (mode == DataMode::NONE) return "425 Can't open data connection: send PORT or PASV before RETR\r\n";
+
+    //PASSIVE: Server đã hẹn port trước (qua PASV) -> bind đúng port đó, chờ handshake để đọc địa chỉ Client
+    //ACTIVE: Server tự chọn port ngẫu nhiên (0) để gửi đi, đích là cổng Client đã báo qua PORT
     unsigned short listenPort = (mode == DataMode::PASSIVE) ? s.getPassivePort() : 0;
 
     //Khởi tạo kênh dữ liệu - UDP (Server gửi - Client nhận)
@@ -288,7 +304,7 @@ string CommandHandler::handleRetr(Session& s, const string& arg) {
     s.setActiveDataChannel(dc.get());
 
     string destIp = (mode == DataMode::ACTIVE) ? s.getActiveIp() : clientIp;
-    unsigned short destPort = (mode == DataMode::ACTIVE) ? s.getActivePort() : CLIENT_DATA_PORT;
+    unsigned short destPort = s.getActivePort(); //mode == ACTIVE (đã loại NONE ở trên; PASSIVE dùng sendFileAfterHandshake, không cần destPort)
 
     transferThread = thread([this, &s, dc, target, mode, destIp, destPort]() {
         bool ok = (mode == DataMode::PASSIVE)
@@ -326,7 +342,7 @@ string CommandHandler::handleMkd(Session& s, const string& arg) {
     fs::path physical = resolvePath(s, arg, newLogical);
     if (physical.empty()) return "550 Invalid path\r\n";
 
-    error_code ec; //Chứa mã lỗi hệ thống được trả về an toàn - tránh crash (vừa khai báo = không có lỗi)
+    error_code ec; 
     bool created = fs::create_directory(physical, ec); //create_directory: tạo 1 thư mục tại đường dãn thực tế đúng 1 cấp - nếu cha chưa có thì fail
     if (ec) return format("550 Can't create directory '{}' ({})\r\n", arg, ec.message());
     if (!created) return format("550 Directory '{}' already exists\r\n", arg);
@@ -381,7 +397,7 @@ string CommandHandler::handleList(Session& s) {
 string CommandHandler::handleStou(Session& s) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
 
-    //Server tự đặt tên file - KHÔNG dùng tên do client gửi
+    //Server tự đặt tên file - KHÔNG dùng tên do Client gửi
     auto ms = chr::duration_cast<chr::milliseconds>(chr::system_clock::now().time_since_epoch()).count();
     /*
     system_clock::now(): lấy thời gian thực tế hiện tại của hệ thống máy tính
@@ -400,7 +416,7 @@ string CommandHandler::handleStou(Session& s) {
     //Khởi tạo kênh dữ liệu - UDP (Server nhận - Client gửi)
     auto dc = make_shared<DataChannel>(pickListenPort(s));
     if (!dc->start()) return "425 Can't open data connection\r\n";
-    sendIntermediate(format("150 FILE: {}\r\n", autoName));  //Báo cho client biết tên file server đã chọn
+    sendIntermediate(appendPortIfNeeded(s, dc->getBoundPort(), format("150 FILE: {}\r\n", autoName)));  //Báo cho client biết tên file server đã chọn (và cổng thật nếu không Passive)
     s.setActiveDataChannel(dc.get());
 
     transferThread = thread([this, &s, dc, target, autoName]() {
@@ -427,7 +443,7 @@ string CommandHandler::handleAppe(Session& s, const string& arg) {
     //Khởi tạo kênh dữ liệu - UDP (Server nhận - Client gửi)
     auto dc = make_shared<DataChannel>(pickListenPort(s));
     if (!dc->start()) return "425 Can't open data connection\r\n";
-    sendIntermediate("150 File status okay, opening data connection\r\n");
+    sendIntermediate(appendPortIfNeeded(s, dc->getBoundPort(), "150 File status okay, opening data connection\r\n"));
     s.setActiveDataChannel(dc.get());
 
     transferThread = thread([this, &s, dc, target]() {
@@ -471,10 +487,8 @@ string CommandHandler::handleRnfr(Session& s, const string& arg) {
 string CommandHandler::handleRnto(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
-
-    //Chưa có RNFR trước đó -> lỗi trình tự lệnh
-    if (s.getRenameFrom().empty()) return "503 Bad sequence of commands\r\n";
-
+    if (s.getRenameFrom().empty()) return "503 Bad sequence of commands\r\n"; //Chưa có RNFR trước đó -> lỗi trình tự lệnh
+     
     string oldLogical, newLogical;
     fs::path oldPath = resolvePath(s, s.getRenameFrom(), oldLogical);
     fs::path newPath = resolvePath(s, arg, newLogical);
@@ -498,8 +512,7 @@ string CommandHandler::handleHash(Session& s, const string& arg) {
     if (filePath.empty() || !fs::exists(filePath) || !fs::is_regular_file(filePath))
         return format("550 File unavailable, {} not found\r\n", arg);
 
-    // Chặn hash song song với 1 transfer khác đang chạy trên cùng Session (tránh đọc file dở dang)
-    joinPreviousTransfer();
+    joinPreviousTransfer(); //Chặn hash song song với 1 transfer khác đang chạy trên cùng Session (tránh đọc file dở dang)
 
     string hash = computeFileSHA256(filePath.string());
     if (hash.empty()) return format("550 Cannot compute hash of '{}'\r\n", arg);
@@ -537,12 +550,13 @@ string CommandHandler::handlePasv(Session& s) {
     unsigned short port = nextPort.fetch_add(1);
     if (port > 6999) { 
         nextPort.store(6000); 
-        port = 6000; }
+        port = 6000; 
+    }
 
     s.setPassiveMode(port);
 
-    //Lấy IP thật của server theo góc nhìn của client này, từ chính control socket đang kết nối
-    sockaddr_in localAddr{};
+    //Lấy IP thật của Server theo góc nhìn của Client này, từ chính control socket đang kết nối
+    sockaddr_in localAddr;
     int len = sizeof(localAddr);
     getsockname(clientSocket, (sockaddr*)&localAddr, &len);
     char ipStr[INET_ADDRSTRLEN];
@@ -560,9 +574,6 @@ string CommandHandler::handlePasv(Session& s) {
 
 string CommandHandler::handleAbor(Session& s) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
-
-    //QUAN TRỌNG: gửi 225 TRƯỚC khi đóng socket, để client luôn thấy "225 ..." rồi mới tới
-    //"426 ..." (thread phụ tự gửi khi phát hiện socket bị đóng).
     sendIntermediate("225 ABOR command successful\r\n");
     s.abortActiveTransfer();
     return "";

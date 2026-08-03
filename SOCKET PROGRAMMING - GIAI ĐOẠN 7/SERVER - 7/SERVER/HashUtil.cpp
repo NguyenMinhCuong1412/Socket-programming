@@ -20,24 +20,19 @@
 #pragma comment(lib, "bcrypt.lib")
 
 #include "HashUtil.h"
-#include <fstream>
-#include <vector>
-#include <sstream>
-#include <iomanip>
-#include <iostream>
 
 // Macro kiểm tra lỗi BCrypt (NTSTATUS: >= 0 là OK)
 #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
 
-std::string computeFileSHA256(const std::string& filePath) {
+string computeFileSHA256(const string& filePath) {
     // ----- Đọc toàn bộ file vào buffer -----
-    std::ifstream in(filePath, std::ios::binary);
+    ifstream in(filePath, ios::binary);
     if (!in.is_open()) {
-        std::cerr << "[HASH] Cannot open file: " << filePath << std::endl;
+        cerr << "[HASH] Cannot open file: " << filePath << endl;
         return "";
     }
-    std::vector<char> fileData((std::istreambuf_iterator<char>(in)),
-        std::istreambuf_iterator<char>());
+    vector<char> fileData((istreambuf_iterator<char>(in)),
+        istreambuf_iterator<char>());
     in.close();
 
     // ----- Khởi tạo BCrypt SHA-256 -----
@@ -51,7 +46,7 @@ std::string computeFileSHA256(const std::string& filePath) {
     // Mở algorithm provider cho SHA-256
     status = BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_SHA256_ALGORITHM, nullptr, 0);
     if (!NT_SUCCESS(status)) {
-        std::cerr << "[HASH] BCryptOpenAlgorithmProvider failed: " << status << std::endl;
+        cerr << "[HASH] BCryptOpenAlgorithmProvider failed: " << status << endl;
         return "";
     }
 
@@ -59,7 +54,7 @@ std::string computeFileSHA256(const std::string& filePath) {
     status = BCryptGetProperty(hAlg, BCRYPT_OBJECT_LENGTH,
         (PBYTE)&hashObjSize, sizeof(DWORD), &dataSize, 0);
     if (!NT_SUCCESS(status)) {
-        std::cerr << "[HASH] BCryptGetProperty(OBJECT_LENGTH) failed" << std::endl;
+        cerr << "[HASH] BCryptGetProperty(OBJECT_LENGTH) failed" << endl;
         BCryptCloseAlgorithmProvider(hAlg, 0);
         return "";
     }
@@ -68,13 +63,13 @@ std::string computeFileSHA256(const std::string& filePath) {
     status = BCryptGetProperty(hAlg, BCRYPT_HASH_LENGTH,
         (PBYTE)&hashSize, sizeof(DWORD), &dataSize, 0);
     if (!NT_SUCCESS(status)) {
-        std::cerr << "[HASH] BCryptGetProperty(HASH_LENGTH) failed" << std::endl;
+        cerr << "[HASH] BCryptGetProperty(HASH_LENGTH) failed" << endl;
         BCryptCloseAlgorithmProvider(hAlg, 0);
         return "";
     }
 
     // Cấp phát buffer cho hash object
-    std::vector<BYTE> hashObj(hashObjSize);
+    vector<BYTE> hashObj(hashObjSize);
 
     // Tạo hash object
     status = BCryptCreateHash(hAlg, &hHash, hashObj.data(), hashObjSize, nullptr, 0, 0);

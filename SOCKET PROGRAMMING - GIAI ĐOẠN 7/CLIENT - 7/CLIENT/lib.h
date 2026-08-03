@@ -20,9 +20,11 @@ std::stringstream, std::vector,
 std::ifstream, std::ofstream,
 std::toupper, std::ios, std::atomic;
 
+// Chỉ CONTROL_PORT cần cố định (cổng "well-known" để Client biết trước mà kết nối TCP).
+// Cổng UDP cho STOR/APPE/STOU (trước là SERVER_DATA_PORT=8081) và cho RETR khi chưa dùng
+// PORT/PASV (trước là CLIENT_DATA_PORT=8082) giờ NGẪU NHIÊN do OS cấp, xem
+// ControlChannel::autoNegotiateActivePort() và ControlChannel::parseEmbeddedPort().
 constexpr unsigned short CONTROL_PORT = 8080;
-constexpr unsigned short SERVER_DATA_PORT = 8081; //server bind cổng này để nhận STOR
-constexpr unsigned short CLIENT_DATA_PORT = 8082; //client bind cổng này để nhận RETR
 constexpr int CHUNK_SIZE = 1024;
 
 enum class ClientDataMode { NONE, ACTIVE, PASSIVE };

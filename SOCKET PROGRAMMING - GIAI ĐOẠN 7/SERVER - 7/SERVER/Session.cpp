@@ -15,12 +15,6 @@ Session::Session() {
 }
 
 Session::~Session() {
-	// KHÔNG delete: activeDataChannel chỉ là con trỏ quan sát (xem giải thích trong setActiveDataChannel).
-	// Đối tượng DataChannel thật sự được sở hữu bởi shared_ptr<DataChannel> nằm trong lambda của
-	// transferThread (CommandHandler); shared_ptr đó tự giải phóng khi thread kết thúc.
-	// CommandHandler::~CommandHandler() luôn join() transferThread TRƯỚC KHI Session bị hủy
-	// (thứ tự hủy biến cục bộ ngược lại thứ tự khai báo trong ControlChannel::handleClient),
-	// nên tới đây transfer chắc chắn đã xong và không còn tranh chấp với activeDataChannel.
 	lock_guard<mutex> lock(this->dcMutex);
 	this->activeDataChannel = nullptr;
 }
@@ -44,13 +38,6 @@ void Session::setPassiveMode(unsigned short port) {
 }
 
 void Session::setActiveDataChannel(DataChannel* dc) {
-	// LỖI CŨ (đã sửa): dòng "delete this->activeDataChannel" ở đây từng gây DOUBLE-FREE.
-	// Nguyên nhân: handleStor/handleRetr/handleStou/handleAppe tạo `shared_ptr<DataChannel> dc`
-	// rồi gọi setActiveDataChannel(dc.get()) — Session chỉ nhận một con trỏ thô mượn tạm.
-	// Khi transfer xong, code gọi setActiveDataChannel(nullptr); nếu hàm này delete con trỏ đó,
-	// thì ngay sau đó, khi lambda của transferThread kết thúc, shared_ptr `dc` cũng tự delete
-	// CHÍNH đối tượng đó lần thứ hai -> heap corruption / crash không ổn định, rất khó tái hiện.
-	// Sửa: hàm này chỉ đơn thuần lưu/xóa con trỏ quan sát để ABOR có thể gọi stop(), không bao giờ delete.
 	lock_guard<mutex> lock(this->dcMutex);
 	this->activeDataChannel = dc;
 }

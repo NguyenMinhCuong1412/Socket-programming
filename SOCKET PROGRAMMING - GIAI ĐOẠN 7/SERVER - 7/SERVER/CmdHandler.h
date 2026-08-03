@@ -2,18 +2,16 @@
 #include "lib.h"
 #include "Session.h"
 
-//Xử lý lệnh FTP
-void parseCmd(const string&, string&, string&);
+void parseCmd(const string&, string&, string&); //Xử lý lệnh FTP
 
-//Chuyển đổi lệnh: string -> enum
-FtpCommand toFtpCommand(const string& command);
+FtpCommand toFtpCommand(const string& command); //Chuyển đổi lệnh: string -> enum
 
 //Hàm lệnh FTP
 class CommandHandler {
 private:
-    SOCKET clientSocket;   //socket của Client được accept
-    string clientIp;       //IP của Client kết nối tới
-    thread transferThread; //luồng phụ của Client chỉ dùng cho truyền/nhận file
+    SOCKET clientSocket;   //socket của Client-TCP được accept
+    string clientIp;       //IP của Client-TCP kết nối tới
+    thread transferThread; //luồng phụ của Client-TCP chỉ dùng cho truyền/nhận file
     
     void joinPreviousTransfer();              //Kiểm tra luồng phụ 
     void sendIntermediate(const string& msg); //Gửi xác nhận qua trung gian
@@ -47,13 +45,15 @@ private:
     string handlePort(Session&, const string&); //Client báo địa chỉ IP:port của mình (chế độ ACTIVE)
     string handlePasv(Session&);                //Server tự chọn 1 port, mở sẵn, chờ client kết nối tới (chế độ PASSIVE)
     string handleAbor(Session&);                //Hủy transfer đang chạy
-    unsigned short pickListenPort(Session&);    //Chọn port server LẮNG NGHE cho STOR/APPE/STOU dựa theo Session::dataMode
+    
+    unsigned short pickListenPort(Session&);    //Chọn port server LẮNG NGHE cho STOR/APPE/STOU/RETR dựa theo Session::dataMode
+    string appendPortIfNeeded(Session&, unsigned short, const string&); //Nhúng " PORT=<n>" vào reply 150 khi Server dùng cổng ngẫu nhiên (Active/None) để Client biết gửi/nhận data ở cổng nào
 public:
     CommandHandler();           
     ~CommandHandler(); //join transferThread nếu còn đang chạy
 
-    void setControlSocket(SOCKET s) { this->clientSocket = s; } //Lưu trữ socket của Client được accept
-    void setClientIp(const string& ip) { this->clientIp = ip; } //Lưu trữ IP của Client kết nối tới
+    void setControlSocket(SOCKET s) { this->clientSocket = s; } //Lưu trữ socket của Client-TCP được accept
+    void setClientIp(const string& ip) { this->clientIp = ip; } //Lưu trữ IP của Client-TCP kết nối tới
     
     string handle(Session&, const string&, const string&); //Điều phối các lệnh FTP
 };

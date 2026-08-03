@@ -144,6 +144,7 @@
     <ClCompile Include="CmdHandler.cpp" />
     <ClCompile Include="ControlChannel.cpp" />
     <ClCompile Include="DataChannel.cpp" />
+    <ClCompile Include="HashUtil.cpp" />
     <ClCompile Include="Server.cpp" />
     <ClCompile Include="Session.cpp" />
     <ClCompile Include="RdtPacket.cpp" />
@@ -152,6 +153,7 @@
     <ClInclude Include="CmdHandler.h" />
     <ClInclude Include="ControlChannel.h" />
     <ClInclude Include="DataChannel.h" />
+    <ClInclude Include="HashUtil.h" />
     <ClInclude Include="lib.h" />
     <ClInclude Include="Session.h" />
     <ClInclude Include="RdtPacket.h" />

@@ -73,11 +73,87 @@ bool ControlChannel::parsePasvReply(const string& reply, unsigned short& outPort
     return true;
 }
 
+bool ControlChannel::parseEmbeddedPort(const string& reply, unsigned short& outPort) {
+    // Server nhúng cổng ngẫu nhiên (Active/None) dạng " PORT=<n>" vào reply "150"
+    // (xem CommandHandler::appendPortIfNeeded phía Server) - đây là cách thay thế
+    // cho việc dùng SERVER_DATA_PORT cố định cũ.
+    const string marker = "PORT=";
+    size_t pos = reply.find(marker);
+    if (pos == string::npos) return false;
+    pos += marker.size();
+    size_t end = pos;
+    while (end < reply.size() && isdigit((unsigned char)reply[end])) end++;
+    if (end == pos) return false;
+    try { outPort = (unsigned short)std::stoi(reply.substr(pos, end - pos)); }
+    catch (...) { return false; }
+    return true;
+}
+
+bool ControlChannel::autoNegotiateActivePort() {
+    // Tự động làm những gì user sẽ phải gõ tay bằng lệnh "PORT h1,h2,h3,h4,p1,p2", nhưng dùng
+    // 1 cổng NGẪU NHIÊN do OS cấp thay vì một số cố định (CLIENT_DATA_PORT cũ), để tránh xung đột
+    // cổng khi chạy nhiều Client cùng lúc trên cùng 1 máy và không phải "đoán" cổng nào đang rảnh.
+
+    // Bước 1: bind thử 1 UDP socket tạm với port=0 để hỏi OS "còn cổng nào trống không", rồi đóng lại.
+    // DataChannel::start() (dùng thật cho RETR) sẽ tự bind lại ĐÚNG số cổng này sau đó.
+    SOCKET tmp = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (tmp == INVALID_SOCKET) return false;
+
+    sockaddr_in tmpAddr{};
+    tmpAddr.sin_family = AF_INET;
+    tmpAddr.sin_addr.s_addr = INADDR_ANY;
+    tmpAddr.sin_port = 0; // 0 = để OS tự chọn cổng còn trống
+    if (bind(tmp, (sockaddr*)&tmpAddr, sizeof(tmpAddr)) == SOCKET_ERROR) {
+        closesocket(tmp);
+        return false;
+    }
+
+    sockaddr_in boundAddr{};
+    int boundLen = sizeof(boundAddr);
+    if (getsockname(tmp, (sockaddr*)&boundAddr, &boundLen) == SOCKET_ERROR) {
+        closesocket(tmp);
+        return false;
+    }
+    unsigned short ephemeralPort = ntohs(boundAddr.sin_port);
+    closesocket(tmp);
+
+    // Bước 2: lấy IP cục bộ theo góc nhìn của kết nối control (giống cách Server tự học IP cho PASV)
+    sockaddr_in localAddr{};
+    int localLen = sizeof(localAddr);
+    if (getsockname(tcpSocket, (sockaddr*)&localAddr, &localLen) == SOCKET_ERROR) return false;
+
+    char ipStr[INET_ADDRSTRLEN];
+    if (!inet_ntop(AF_INET, &localAddr.sin_addr, ipStr, INET_ADDRSTRLEN)) return false;
+
+    vector<int> ipParts;
+    stringstream ipss(ipStr);
+    string seg;
+    while (getline(ipss, seg, '.')) {
+        try { ipParts.push_back(std::stoi(seg)); }
+        catch (...) { return false; }
+    }
+    if (ipParts.size() != 4) return false;
+
+    string portCmd = format("PORT {},{},{},{},{},{}",
+        ipParts[0], ipParts[1], ipParts[2], ipParts[3],
+        ephemeralPort / 256, ephemeralPort % 256);
+
+    // Cập nhật trạng thái cục bộ NGAY (không cần đợi reply "200" từ server, vì thứ tự gửi TCP
+    // đảm bảo lệnh RETR gửi ngay sau đó sẽ tới server SAU lệnh PORT tự động này).
+    myActivePort = ephemeralPort;
+    dataMode = ClientDataMode::ACTIVE;
+
+    send(tcpSocket, portCmd.c_str(), (int)portCmd.size(), 0);
+    return true;
+}
+
 // Thực hiện data-transfer THẬT - gọi từ receiverLoop() (thread nền), BLOCKING ở đây
 // KHÔNG ảnh hưởng thread đọc bàn phím -> user vẫn gõ ABOR được trong lúc hàm này đang chạy.
 void ControlChannel::doDataTransfer(const string& cmdWord, const string& filename) {
     if (cmdWord == "STOR" || cmdWord == "STOU" || cmdWord == "APPE") {
-        unsigned short destPort = (dataMode.load() == ClientDataMode::PASSIVE) ? serverPasvPort.load() : SERVER_DATA_PORT;
+        // PASSIVE: dùng cổng server đã báo qua 227. ACTIVE/NONE: dùng cổng ngẫu nhiên server vừa
+        // báo qua "150" (serverUploadPort) - thay cho SERVER_DATA_PORT cố định cũ.
+        unsigned short destPort = (dataMode.load() == ClientDataMode::PASSIVE) ? serverPasvPort.load() : serverUploadPort.load();
         DataChannel dc(0); // port cục bộ ephemeral - không quan trọng khi gửi đi
         if (dc.start()) {
             dc.sendFile(filename, serverIp, destPort);
@@ -97,7 +173,8 @@ void ControlChannel::doDataTransfer(const string& cmdWord, const string& filenam
             }
         }
         else if (mode == ClientDataMode::ACTIVE) {
-            // ACTIVE: server sẽ tự gửi tới đúng port client đã báo qua PORT
+            // ACTIVE (kể cả tự động qua autoNegotiateActivePort()): server sẽ tự gửi tới
+            // đúng port client đã báo qua PORT (số ngẫu nhiên do OS cấp, không còn cố định).
             DataChannel dc(myActivePort.load());
             if (dc.start()) {
                 dc.receiveFile(filename);
@@ -105,12 +182,10 @@ void ControlChannel::doDataTransfer(const string& cmdWord, const string& filenam
             }
         }
         else {
-            // Mặc định (chưa dùng PORT/PASV lần nào): giữ hành vi cũ như GĐ4
-            DataChannel dc(CLIENT_DATA_PORT);
-            if (dc.start()) {
-                dc.receiveFile(filename);
-                dc.stop();
-            }
+            // Trường hợp này KHÔNG còn xảy ra bình thường: run() luôn tự động gọi
+            // autoNegotiateActivePort() trước khi gửi RETR nếu chưa có PORT/PASV nào.
+            // Giữ lại làm lớp bảo vệ để không tự đoán bừa 1 cổng cố định (CLIENT_DATA_PORT cũ).
+            cerr << "425 Can't open data connection: no PORT/PASV negotiated for this RETR" << endl;
         }
     }
 }
@@ -144,6 +219,11 @@ void ControlChannel::receiverLoop() {
         }
 
         if (reply.substr(0, 3) == "150") {
+            // Nếu Server không dùng Passive, nó nhúng cổng ngẫu nhiên thật (thay SERVER_DATA_PORT cũ)
+            // vào reply này dưới dạng " PORT=<n>" - đọc ra để STOR/APPE/STOU biết gửi data đi đâu.
+            unsigned short p;
+            if (parseEmbeddedPort(reply, p)) serverUploadPort = p;
+
             string cmdWord, filename;
             {
                 std::lock_guard<std::mutex> lock(pendingMutex);
@@ -196,6 +276,13 @@ void ControlChannel::run() {
                 myActivePort = p;
                 dataMode = ClientDataMode::ACTIVE;
             }
+        }
+
+        // RETR mà chưa từng dùng PORT/PASV lần nào (dataMode == NONE): tự động "PORT" ngầm với
+        // 1 cổng NGẪU NHIÊN do OS cấp trước khi gửi RETR thật - thay cho việc dùng CLIENT_DATA_PORT
+        // cố định cũ (rủi ro đụng cổng khi chạy nhiều Client, hoặc cổng bị chiếm bởi tiến trình khác).
+        if (cmdWord == "RETR" && dataMode.load() == ClientDataMode::NONE) {
+            autoNegotiateActivePort();
         }
 
         // Ghi nhớ lệnh vừa gửi TRƯỚC khi send(), để thread nền biết cần làm gì khi thấy "150"
