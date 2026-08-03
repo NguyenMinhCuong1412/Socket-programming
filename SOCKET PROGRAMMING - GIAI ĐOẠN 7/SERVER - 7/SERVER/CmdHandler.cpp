@@ -256,6 +256,9 @@ string CommandHandler::handleStor(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
 
+    DataMode mode = s.getDataMode();
+    if (mode == DataMode::NONE) return "425 Can't open data connection: send PORT or PASV before RETR\r\n";
+
     string logical;
     fs::path target = resolvePath(s, arg, logical);
     if (target.empty()) return "550 Invalid path\r\n";
@@ -265,6 +268,7 @@ string CommandHandler::handleStor(Session& s, const string& arg) {
     //Khởi tạo kênh dữ liệu - UDP (Server nhận - Client gửi)
     auto dc = make_shared<DataChannel>(pickListenPort(s));
     if (!dc->start()) return "425 Can't open data connection\r\n";
+
     sendIntermediate(appendPortIfNeeded(s, dc->getBoundPort(), "150 File status okay, opening data connection\r\n"));
     s.setActiveDataChannel(dc.get()); //Đăng ký để ABOR (thread khác) có thể đóng socket này
 
@@ -283,6 +287,9 @@ string CommandHandler::handleRetr(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
 
+    DataMode mode = s.getDataMode();
+    if (mode == DataMode::NONE) return "425 Can't open data connection: send PORT or PASV before RETR\r\n";
+
     string logical;
     fs::path target = resolvePath(s, arg, logical);
     if (target.empty() || !fs::exists(target) || !fs::is_regular_file(target))
@@ -290,16 +297,10 @@ string CommandHandler::handleRetr(Session& s, const string& arg) {
 
     joinPreviousTransfer();
 
-    DataMode mode = s.getDataMode();
-    if (mode == DataMode::NONE) return "425 Can't open data connection: send PORT or PASV before RETR\r\n";
-
-    //PASSIVE: Server đã hẹn port trước (qua PASV) -> bind đúng port đó, chờ handshake để đọc địa chỉ Client
-    //ACTIVE: Server tự chọn port ngẫu nhiên (0) để gửi đi, đích là cổng Client đã báo qua PORT
-    unsigned short listenPort = (mode == DataMode::PASSIVE) ? s.getPassivePort() : 0;
-
     //Khởi tạo kênh dữ liệu - UDP (Server gửi - Client nhận)
-    auto dc = make_shared<DataChannel>(listenPort);
+    auto dc = make_shared<DataChannel>(pickListenPort(s));
     if (!dc->start()) return "425 Can't open data connection\r\n";
+
     sendIntermediate("150 File status okay, opening data connection\r\n"); 
     s.setActiveDataChannel(dc.get());
 
@@ -308,8 +309,8 @@ string CommandHandler::handleRetr(Session& s, const string& arg) {
 
     transferThread = thread([this, &s, dc, target, mode, destIp, destPort]() {
         bool ok = (mode == DataMode::PASSIVE)
-            ? dc->sendFileAfterHandshake(target.string())
-            : dc->sendFile(target.string(), destIp, destPort); //Server gửi dữ liệu tới Client
+            ? dc->sendFileAfterHandshake(target.string())      //mode == PASSIVE
+            : dc->sendFile(target.string(), destIp, destPort); //mode == ACTIVE
         s.setActiveDataChannel(nullptr);
         dc->stop();
         this->sendIntermediate(ok ? "226 Transfer complete\r\n" : "426 Connection closed, transfer aborted\r\n");
@@ -416,7 +417,8 @@ string CommandHandler::handleStou(Session& s) {
     //Khởi tạo kênh dữ liệu - UDP (Server nhận - Client gửi)
     auto dc = make_shared<DataChannel>(pickListenPort(s));
     if (!dc->start()) return "425 Can't open data connection\r\n";
-    sendIntermediate(appendPortIfNeeded(s, dc->getBoundPort(), format("150 FILE: {}\r\n", autoName)));  //Báo cho client biết tên file server đã chọn (và cổng thật nếu không Passive)
+
+    sendIntermediate(appendPortIfNeeded(s, dc->getBoundPort(), format("150 FILE: {}\r\n", autoName))); 
     s.setActiveDataChannel(dc.get());
 
     transferThread = thread([this, &s, dc, target, autoName]() {
@@ -443,11 +445,12 @@ string CommandHandler::handleAppe(Session& s, const string& arg) {
     //Khởi tạo kênh dữ liệu - UDP (Server nhận - Client gửi)
     auto dc = make_shared<DataChannel>(pickListenPort(s));
     if (!dc->start()) return "425 Can't open data connection\r\n";
+
     sendIntermediate(appendPortIfNeeded(s, dc->getBoundPort(), "150 File status okay, opening data connection\r\n"));
     s.setActiveDataChannel(dc.get());
 
     transferThread = thread([this, &s, dc, target]() {
-        bool ok = dc->receiveFile(target.string(), true); //append = true -> mở file bằng ios::app
+        bool ok = dc->receiveFile(target.string(), true); //append == true -> mở file bằng ios::app
         s.setActiveDataChannel(nullptr);
         dc->stop();
         this->sendIntermediate(ok ? "226 Transfer complete\r\n" : "426 Connection closed, transfer aborted\r\n");
@@ -544,8 +547,7 @@ string CommandHandler::handlePort(Session& s, const string& arg) {
 string CommandHandler::handlePasv(Session& s) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
 
-    //Chọn port tuần tự có wrap-around trong dải 6000-6999, thread-safe vì nhiều client
-    //(nhiều thread) có thể gọi PASV cùng lúc.
+    //Chọn port tuần tự có wrap-around trong dải 6000-6999, thread-safe vì nhiều client (nhiều thread) có thể gọi PASV cùng lúc.
     static atomic<unsigned short> nextPort{ 6000 };
     unsigned short port = nextPort.fetch_add(1);
     if (port > 6999) { 

@@ -8,21 +8,8 @@ private:
 	unsigned short udpPort;   //Port để phục vụ kênh dữ liệu
 	atomic<SOCKET> udpSocket; //Socket phục vụ kênh dữ liệu của Server-UDP, đảm bảo stop() có thể đóng socket an toàn
 
-	// ====== RDT — Reliable Data Transfer (Giai đoạn 6) ======
-
-	// Gửi 1 buffer dữ liệu qua RDT (Stop-and-Wait ARQ)
-	// Tự chia thành các chunk RDT_MAX_PAYLOAD, gửi từng gói DATA + chờ ACK,
-	// cuối cùng gửi FIN để báo kết thúc.
-	// Return: true nếu toàn bộ dữ liệu đã được ACK thành công
 	bool rdtSend(SOCKET s, const char* data, int len, const sockaddr_in& dest);
-
-	// Nhận toàn bộ dữ liệu qua RDT (Stop-and-Wait ARQ)
-	// Vòng lặp nhận DATA → ACK → cho đến khi nhận FIN.
-	// outData: buffer chứa toàn bộ payload đã nhận
-	// senderAddr: địa chỉ bên gửi (output — để caller biết ai gửi)
-	// Return: tổng số byte dữ liệu nhận được, -1 nếu lỗi
 	int rdtReceive(SOCKET s, std::vector<char>& outData, sockaddr_in& senderAddr);
-
 public:
 	DataChannel(unsigned short);
 	~DataChannel() = default;
