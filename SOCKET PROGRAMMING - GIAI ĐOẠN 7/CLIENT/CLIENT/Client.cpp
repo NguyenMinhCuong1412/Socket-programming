@@ -5,7 +5,7 @@ int main() {
     //Khởi tạo môi trường socket
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        cerr << "421 Service not available , WSAStartup failed" << endl;
+        cerr << "421 Service not available, WSAStartup failed" << endl;
         return 1;
     }
 

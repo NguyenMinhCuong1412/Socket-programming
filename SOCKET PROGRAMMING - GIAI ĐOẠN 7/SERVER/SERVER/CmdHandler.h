@@ -41,7 +41,7 @@ private:
     string handleDele(Session&, const string&); //Delete - Xóa 1 tệp 
     string handleRnfr(Session&, const string&); //Rename From - Chỉ định tệp cần đổi tên
     string handleRnto(Session&, const string&); //Rename To - Đặt tên mới
-    string handleHash(Session&, const string&); //Hash - Trả về SHA-256 của tệp để xác thực toàn vẹn dữ liệu
+    string handleHash(Session&, const string&); //Hash - Trả về SHA-256 (Secure Hash Algorithm 256-bit) của tệp để xác thực toàn vẹn dữ liệu
     string handlePort(Session&, const string&); //Client báo địa chỉ IP:port của mình (chế độ ACTIVE)
     string handlePasv(Session&);                //Server tự chọn 1 port, mở sẵn, chờ client kết nối tới (chế độ PASSIVE)
     string handleAbor(Session&);                //Hủy transfer đang chạy

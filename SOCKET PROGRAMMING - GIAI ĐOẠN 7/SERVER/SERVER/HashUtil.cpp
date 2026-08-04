@@ -1,9 +1,6 @@
 // ============================================================
 // HashUtil.cpp — Implement SHA-256 bằng Windows BCrypt API
-//
-// BCrypt (CNG) là API hệ điều hành Windows, có sẵn từ Vista trở lên.
-// Không cần cài thêm thư viện nào.
-//
+// BCrypt (CNG) là API hệ điều hành Windows, có sẵn từ Vista trở lên
 // Luồng:
 //   BCryptOpenAlgorithmProvider (SHA256)
 //     → BCryptCreateHash

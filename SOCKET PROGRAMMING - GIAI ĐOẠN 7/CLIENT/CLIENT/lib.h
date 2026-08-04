@@ -19,14 +19,15 @@
 #include <ws2tcpip.h>   //Winsock 2 TCP/IP: thư viện bổ sung cung cấp các công cụ nâng cao chuyên dụng cho giao thức TCP/IP
 #include <windows.h>    //Nạp file header trung tâm của Windows SDK, cho phép chương trình C/C++ gọi và sử dụng các API hệ thống của Windows
 #include <bcrypt.h>     //Nạp file header chứa khai báo cho Windows CNG (Cryptography Next Generation) API - bộ công cụ mã hóa chính chủ của Microsoft Windows
-#include <cstdint>      
-#include <random>
+#include <cstdint>      //C Standard Integer Types: quản lý các kiểu dữ liệu số nguyên (integer) có kích thước cố định chính xác về số bit (Fixed-width integer types)
+#include <random>       //Random Number Generation: tạo ra các số ngẫu nhiên chất lượng cao và phân bố số ngẫu nhiên theo các quy luật thống kê
+#include <iomanip>      //Làm việc với định dạng xuất dữ liệu (setw, setfill, hex, ...)
 
 #pragma comment(lib, "bcrypt.lib") //Liên kết thư viện mã hóa Windows CNG (Cryptography Next Generation)
 #pragma comment(lib, "ws2_32.lib") //Liên kết thư viện Winsock 2 (Windows Sockets 2) API
 
 
-using std::cerr, std::cout,
+using std::cerr, std::cout, std::cin,
 std::stoi, std::endl,
 std::format, std::toupper,
 std::string, std::ios,
@@ -43,13 +44,13 @@ std::lock_guard,              //Bảo vệ tài nguyên chung không bị lấn 
 std::thread,                  //Tạo một Luồng chạy ngầm (Detached Thread) để xử lý kết nối từ một Client mới 
 std::shared_ptr,              //Smart Pointer: quản lý vòng đời của đối tượng (Object Lifetime) và cho phép nhiều con trỏ trỏ đến cùng một đối tượng trong bộ nhớ Heap, tránh rò rỉ bộ nhớ
 std::make_shared,             //Tạo một đối tượng trong 1 vùng bộ nhớ Heap và trả về một con trỏ thông minh (Smart Pointer) trỏ đến đối tượng đó, quản lý vòng đời của đối tượng
-std::istreambuf_iterator,
-std::hex,
-std::setfill,
-std::setw, 
-std::mt19937,
-std::random_device,
-std::uniform_int_distribution;
+std::istreambuf_iterator,     //Con trỏ đặc biệt dùng để đọc trực tiếp từng ký tự (hoặc byte) thô từ bộ đệm của một input stream
+std::hex,                     //Chuyển định dạng xuất/nhập số nguyên sang hệ thập lục phân (Hexadecimal - Cơ số 16)
+std::setfill,                 //Đặt ký tự lấp đầy (fill character) cho phần khoảng trống được tạo ra bởi std::setw
+std::setw,                    //Đặt độ rộng tối thiểu (width) cho dữ liệu tiếp theo sẽ xuất ra luồng
+std::mt19937,                 //Bộ sinh số giả ngẫu nhiên dựa trên thuật toán Mersenne Twister (chu kỳ cực dài $2^{19937}-1$)
+std::random_device,           //Lấy một chuỗi hạt giống (seed) ngẫu nhiên thực sự từ phần cứng máy tính
+std::uniform_int_distribution;//Nắn các số ngẫu nhiên thô từ std::mt19937 sao cho chúng phân bố đồng đều (uniform distribution) trong một khoảng số nguyên [a, b] xác định
 
 namespace fs = std::filesystem;
 namespace chr = std::chrono;
@@ -57,24 +58,9 @@ namespace chr = std::chrono;
 constexpr unsigned short CONTROL_PORT = 8080; //Server-TCP bind cổng cố định để nhận lệnh FTP từ Client-TCP  
 constexpr int CHUNK_SIZE = 1024;              //Kích thước tối đa của 1 gói tin
 
-//inline: tất cả các file dùng chung 1 biến này khi chương trình gộp các file để chạy
-inline const fs::path SERVER_ROOT = fs::current_path() / "server_root"; //Thư mục làm việc của Client lúc Server khởi động (working directory của process)
-inline mutex g_coutMutex; //Tránh truy cập của nhiều thread (nhiều client) in xen kẽ, lẫn lộn ra console - g_: biến toàn cục 
-
 //Phục vụ cho PORT/PASV
-enum class DataMode { 
-    NONE,   //Dùng để kiểm tra Client đã gửi lệnh PASV/PORT 
+enum class DataMode {
+	NONE,   //Chưa thiết lập chế độ -> báo lỗi
 	ACTIVE, //Client tự chọn port -> báo cho Server -> Server chủ động kết nối sang Client để truyền/nhận dữ liệu
 	PASSIVE //Server tự chọn port -> báo cho Client -> Client chủ động kết nối sang Server để truyền/nhận dữ liệu
-};
-
-//Giá trị cố định của các mã lệnh FTP
-enum class FtpCommand {
-    USER, PASS, QUIT, NOOP, PWD,
-    CWD, CDUP, MKD, RMD, LIST,
-    NLST, STAT, SIZE, MDTM, TYPE,
-    MODE, PORT, PASV, RETR, STOR,
-    STOU, APPE, DELE, RNFR, RNTO,
-    HASH, ABOR, HELP,
-    UNKNOWN
 };

@@ -1,12 +1,5 @@
 #include "RdtPacket.h"
 
-//computeChecksum — Tính Internet checksum (1's complement sum)
-//Thuật toán:
-//   1. Cộng từng cặp 2 byte (big-endian) vào biến sum 32-bit
-//   2. Nếu số byte lẻ → byte cuối được pad thêm 0x00
-//   3. Fold carry: cộng phần tràn 16 bit cao vào 16 bit thấp
-//   4. Đảo bit (~) kết quả → trả về
-// LƯU Ý: Field checksum trong packet phải = 0 trước khi gọi hàm này
 uint16_t computeChecksum(const char* data, int length) {
     uint32_t sum = 0;
 
@@ -14,23 +7,21 @@ uint16_t computeChecksum(const char* data, int length) {
     int i = 0;
     while (i + 1 < length) {
         //Ghép 2 byte liên tiếp thành 1 giá trị 16-bit (big-endian)
-        uint16_t word = ((uint8_t)data[i] << 8) | (uint8_t)data[i + 1];
-        sum += word;
+        uint16_t word = ((uint8_t)data[i] << 8) | (uint8_t)data[i + 1]; //<< 8: dịch trái byte thứ 1 sang 8 bit; |: phép OR gom byte thứ 2 vào chung byte thứ 1 -> kết quả: số 16 bit
+        sum += word;                                                    //Cộng dồn vào sum
         i += 2;
     }
 
-    //Nếu số byte lẻ → byte cuối pad thêm 0x00 phía sau
+    //Nếu số byte lẻ -> byte cuối pad thêm 0x00 phía sau
     if (i < length) {
-        uint16_t word = (uint8_t)data[i] << 8; // pad 0x00
+        uint16_t word = (uint8_t)data[i] << 8; //pad 0x00
         sum += word;
     }
 
-    while (sum >> 16) sum = (sum & 0xFFFF) + (sum >> 16); //Fold carry: cộng phần tràn (16 bit cao) vào 16 bit thấp
-    return ~(uint16_t)sum;     //Đảo bit
+    while (sum >> 16) sum = (sum & 0xFFFF) + (sum >> 16); //Fold carry: cộng phần tràn 16 bit thấp + 16 bit cao
+    return ~(uint16_t)sum; //Đảo bit
 }
 
-//verifyChecksum — Kiểm tra checksum của packet đã serialize
-//Cách hoạt động: tính checksum trên TOÀN BỘ packet (bao gồm cả field checksum đã có giá trị) → nếu packet không bị lỗi thì kết quả phải = 0
 bool verifyChecksum(const char* data, int length) {
     uint32_t sum = 0;
     int i = 0;
@@ -47,14 +38,6 @@ bool verifyChecksum(const char* data, int length) {
     return ((uint16_t)~sum == 0); // Nếu không lỗi, tổng 1's complement phải = 0xFFFF → ~0xFFFF = 0
 }
 
-//serializePacket — Chuyển RdtPacket thành mảng byte
-//Thứ tự ghi:
-//   [0..3]  seqNum        (4 byte, network byte order)
-//   [4]     flags         (1 byte)
-//   [5..6]  checksum      (2 byte, network byte order) — ghi 0 trước, tính sau
-//   [7..8]  payloadLength (2 byte, network byte order)
-//   [9..]   payload       (payloadLength byte)
-//Sau khi ghi xong tất cả field (checksum=0), tính checksum trên toàn bộ buffer, rồi ghi ngược lại vào vị trí [5..6]
 vector<char> serializePacket(const RdtPacket& pkt) {
     int totalSize = RDT_HEADER_SIZE + (int)pkt.payload.size();
     vector<char> buf(totalSize, 0);
@@ -85,12 +68,6 @@ vector<char> serializePacket(const RdtPacket& pkt) {
     return buf;
 }
 
-//deserializePacket — Chuyển mảng byte thành RdtPacket
-//Kiểm tra:
-//   1. Đủ dữ liệu cho header (tối thiểu 9 byte)
-//   2. payloadLength + header = tổng length nhận được
-//   3. Checksum hợp lệ (verifyChecksum)
-//Return false nếu bất kỳ kiểm tra nào thất bại
 bool deserializePacket(const char* data, int length, RdtPacket& outPkt) {
     //Kiểm tra đủ header
     if (length < RDT_HEADER_SIZE) {
@@ -106,7 +83,7 @@ bool deserializePacket(const char* data, int length, RdtPacket& outPkt) {
     netSeq |= ((uint32_t)(uint8_t)data[3]);
     outPkt.seqNum = ntohl(netSeq);
 
-    
+
     outPkt.flags = (uint8_t)data[4]; //Đọc flags (1 byte)
 
     //Đọc checksum (2 byte, network byte order)
@@ -123,7 +100,7 @@ bool deserializePacket(const char* data, int length, RdtPacket& outPkt) {
 
     //Kiểm tra payloadLength khớp với dữ liệu thực nhận
     if (outPkt.payloadLength != length - RDT_HEADER_SIZE) {
-        cerr << format("[RDT] Payload length mismatch: header says {} but received {} bytes", 
+        cerr << format("[RDT] Payload length mismatch: header says {} but received {} bytes",
             outPkt.payloadLength, (length - RDT_HEADER_SIZE)) << endl;
         return false;
     }
@@ -138,9 +115,6 @@ bool deserializePacket(const char* data, int length, RdtPacket& outPkt) {
     return true;
 }
 
-//shouldSimulateLoss — Quyết định có "bỏ" gói này không
-//Dùng random engine thread-local để thread-safe
-//Chỉ trả về true khi SIMULATE_PACKET_LOSS = true
 bool shouldSimulateLoss() {
     if (!SIMULATE_PACKET_LOSS) return false;
 

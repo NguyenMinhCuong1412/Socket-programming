@@ -45,7 +45,7 @@ void Session::setActiveDataChannel(DataChannel* dc) {
 bool Session::abortActiveTransfer() {
 	lock_guard<mutex> lock(this->dcMutex);
 	if (this->activeDataChannel != nullptr) {
-		this->activeDataChannel->stop(); // closesocket() -> recvfrom/sendto đang block ở thread phụ báo lỗi
+		this->activeDataChannel->stop(); //closesocket() -> recvfrom/sendto đang block ở thread phụ báo lỗi
 		return true;
 	}
 	return false;

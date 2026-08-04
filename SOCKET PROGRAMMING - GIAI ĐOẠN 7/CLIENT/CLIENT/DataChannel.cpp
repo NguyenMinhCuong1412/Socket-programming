@@ -1,5 +1,4 @@
 #include "DataChannel.h"
-#include <chrono>
 
 DataChannel::DataChannel(unsigned short port) {
 	this->udpPort = port;
@@ -71,7 +70,7 @@ bool DataChannel::rdtSend(SOCKET s, const char* data, int len, const sockaddr_in
 	while (base < totalChunks) {
 		//Gửi thêm gói mới miễn còn nằm trong giới hạn cửa sổ
 		while (nextSeq < totalChunks && nextSeq < base + (uint32_t)window) {
-			if (!shouldSimulateLoss()) 
+			if (!shouldSimulateLoss())
 				sendto(s, serializedPkts[nextSeq].data(), (int)serializedPkts[nextSeq].size(), 0,
 					(const sockaddr*)&dest, sizeof(dest));
 			else cout << "[RDT-SIM] Dropped outgoing DATA packet seq=" << nextSeq << endl;
@@ -97,7 +96,7 @@ bool DataChannel::rdtSend(SOCKET s, const char* data, int len, const sockaddr_in
 			//Hết 1 chu kỳ poll mà chưa có ACK nào — sẽ kiểm tra timeout thật bên dưới
 		}
 		else if (shouldSimulateLoss()) cout << "[RDT-SIM] Dropped incoming ACK" << endl;
-		
+
 		else {
 			RdtPacket ackPkt;
 			if (deserializePacket(ackBuf, ackLen, ackPkt) && (ackPkt.flags & FLAG_ACK)) {
@@ -253,16 +252,16 @@ int DataChannel::rdtReceive(SOCKET s, std::vector<char>& outData, sockaddr_in& s
 				outData.insert(outData.end(), pkt.payload.begin(), pkt.payload.end());
 				expectedSeq++;
 			}
-			else if (pkt.seqNum < expectedSeq) 
+			else if (pkt.seqNum < expectedSeq)
 				//Gói trùng lặp (đã nhận trước đó) → không deliver lại, chỉ re-ACK
 				cout << "[RDT] Duplicate DATA seq=" << pkt.seqNum
-					<< " (already have up to " << (expectedSeq - 1) << "), re-ACK" << endl;
-			
-			else 
+				<< " (already have up to " << (expectedSeq - 1) << "), re-ACK" << endl;
+
+			else
 				//Gói đến SỚM hơn dự kiến (ngoài thứ tự) → Go-Back-N: LOẠI BỎ, không đệm lại
 				cout << "[RDT] Out-of-order DATA seq=" << pkt.seqNum
-					<< " (expected " << expectedSeq << "), discarding (Go-Back-N)" << endl;
-			
+				<< " (expected " << expectedSeq << "), discarding (Go-Back-N)" << endl;
+
 
 			//Luôn gửi CUMULATIVE ACK = expectedSeq-1 (số thứ tự lớn nhất đã nhận LIÊN TỤC).
 			//Nếu expectedSeq == 0 (chưa nhận đúng thứ tự gói nào) thì dùng giá trị đặc biệt
@@ -280,7 +279,7 @@ int DataChannel::rdtReceive(SOCKET s, std::vector<char>& outData, sockaddr_in& s
 					(const sockaddr*)&senderAddr, sizeof(senderAddr));
 			}
 			else cout << "[RDT-SIM] Dropped outgoing ACK seq=" << cumulativeAck << endl;
-			
+
 		}
 	}
 

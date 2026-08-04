@@ -133,7 +133,7 @@ string CommandHandler::handleQuit() {
 }
 
 string CommandHandler::handleHelp(const string& arg) {
-    if (arg.empty()) {  //Hiển thị toàn bộ lệnh hỗ trợ
+    if (arg.empty()) { //Hiển thị toàn bộ lệnh hỗ trợ
         string response = "214 The following commands are recognized:\r\n";
         response += "    USER    PASS    PWD     NOOP    QUIT    HELP\n";
         response += "    TYPE    MODE    SIZE    STAT    MDTM    STOR\n";

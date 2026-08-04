@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Báo Cáo & Tài Liệu Chi Tiết Hệ Thống Hybrid FTP Socket RDT</title>
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-card: #0f172a;
+            --bg-code: #020617;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent-blue: #38bdf8;
+            --accent-cyan: #22d3ee;
+            --accent-green: #4ade80;
+            --accent-purple: #c084fc;
+            --accent-orange: #fb923c;
+            --accent-rose: #f43f5e;
+            --border-color: #334155;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-main);
+            line-height: 1.7;
+            padding: 25px;
+        }
+
+        .header {
+            text-align: center;
+            padding: 45px 30px;
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            border-radius: 16px;
+            margin-bottom: 35px;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 15px 30px -10px rgba(0, 0, 0, 0.6);
+        }
+
+        .header h1 {
+            font-size: 2.2rem;
+            color: var(--accent-blue);
+            margin-bottom: 12px;
+            letter-spacing: -0.5px;
+        }
+
+        .header p {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+            max-width: 950px;
+            margin: 0 auto;
+        }
+
+        .container {
+            max-width: 1550px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 320px 1fr;
+            gap: 30px;
+        }
+
+        .sidebar {
+            background: var(--bg-secondary);
+            padding: 22px;
+            border-radius: 14px;
+            border: 1px solid var(--border-color);
+            position: sticky;
+            top: 25px;
+            max-height: calc(100vh - 50px);
+            overflow-y: auto;
+        }
+
+        .sidebar h3 {
+            font-size: 1rem;
+            color: var(--accent-green);
+            margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--border-color);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .sidebar ul {
+            list-style: none;
+            margin-bottom: 20px;
+        }
+
+        .sidebar li {
+            margin-bottom: 6px;
+        }
+
+        .sidebar a {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.9rem;
+            display: block;
+            padding: 7px 10px;
+            border-radius: 6px;
+            transition: all 0.2s ease;
+        }
+
+        .sidebar a:hover {
+            background: rgba(56, 189, 248, 0.12);
+            color: var(--accent-blue);
+            transform: translateX(3px);
+        }
+
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            gap: 35px;
+        }
+
+        .section-card {
+            background: var(--bg-secondary);
+            border-radius: 14px;
+            border: 1px solid var(--border-color);
+            padding: 30px;
+            box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.4);
+        }
+
+        .section-title {
+            font-size: 1.6rem;
+            color: var(--accent-cyan);
+            margin-bottom: 22px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 12px;
+        }
+
+        .badge {
+            font-size: 0.8rem;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge-server {
+            background: #1e3a8a;
+            color: #93c5fd;
+        }
+
+        .badge-client {
+            background: #831843;
+            color: #fbcfe8;
+        }
+
+        .badge-shared {
+            background: #14532d;
+            color: #86efac;
+        }
+
+        .badge-core {
+            background: #7c2d12;
+            color: #ffedd5;
+        }
+
+        .badge-overview {
+            background: #581c87;
+            color: #e9d5ff;
+        }
+
+        .func-box {
+            background: var(--bg-card);
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            margin-bottom: 22px;
+            padding: 20px;
+            transition: border-color 0.2s;
+        }
+
+        .func-box:hover {
+            border-color: var(--accent-blue);
+        }
+
+        .func-name {
+            font-family: 'Consolas', 'Cascadia Code', monospace;
+            font-size: 1.15rem;
+            color: var(--accent-purple);
+            margin-bottom: 10px;
+            word-break: break-all;
+        }
+
+        .func-desc {
+            color: var(--text-main);
+            margin-bottom: 12px;
+            font-size: 0.98rem;
+        }
+
+        .param-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 12px 0;
+            font-size: 0.9rem;
+        }
+
+        .param-table th,
+        .param-table td {
+            border: 1px solid var(--border-color);
+            padding: 8px 12px;
+            text-align: left;
+        }
+
+        .param-table th {
+            background: var(--bg-primary);
+            color: var(--accent-orange);
+        }
+
+        .step-box {
+            background: var(--bg-code);
+            border-left: 4px solid var(--accent-blue);
+            padding: 14px 18px;
+            border-radius: 0 8px 8px 0;
+            margin-top: 12px;
+        }
+
+        .step-box h5 {
+            color: var(--accent-green);
+            font-size: 0.92rem;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+        }
+
+        ul.step-list {
+            padding-left: 20px;
+            color: var(--text-muted);
+            font-size: 0.93rem;
+        }
+
+        ul.step-list li {
+            margin-bottom: 6px;
+        }
+
+        ul.step-list li strong {
+            color: var(--text-main);
+        }
+
+        code {
+            font-family: 'Consolas', monospace;
+            background: #020617;
+            color: #38bdf8;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.88em;
+            border: 1px solid #1e293b;
+        }
+
+        .highlight-box {
+            background: rgba(244, 63, 94, 0.1);
+            border: 1px solid rgba(244, 63, 94, 0.3);
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 15px;
+            color: #fca5a5;
+            font-size: 0.92rem;
+        }
+
+        .highlight-box strong {
+            color: var(--accent-rose);
+        }
+
+        .note-box {
+            background: rgba(56, 189, 248, 0.1);
+            border-left: 4px solid var(--accent-blue);
+            border-radius: 4px;
+            padding: 12px 16px;
+            margin: 12px 0;
+            font-size: 0.93rem;
+            color: #e0f2fe;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="header">
+        <h1>TÀI LIỆU TOÀN DIỆN & TỔNG QUAN DỰ ÁN HYBRID FTP RDT SOCKET</h1>
+        <p>Hệ Thống Lập Trình Socket FTP Client/Server & Truyền Tải Tin Cậy RDT (Go-Back-N + AIMD, Cổng Tự
+            Động)</p>
+    </div>
+
+    <div class="container">
+        <!-- SIDEBAR NAVIGATION -->
+        <div class="sidebar">
+            <h3>I. Bức Tranh Tổng Quan</h3>
+            <ul>
+                <li><a href="#overview-picture">1. Mô Hình Tổng Thể Hệ Thống</a></li>
+                <li><a href="#end-to-end">2. Luồng Hoạt Động End-to-End</a></li>
+                <li><a href="#rdt-mechanism">3. Cơ Chế RDT Go-Back-N + AIMD</a></li>
+                <li><a href="#dynamic-port">4. Cơ Chế Thương Lượng Cổng UDP</a></li>
+                <li><a href="#tech-highlights">5. Kỹ Thuật Lõi & Bài Học</a></li>
+            </ul>
+
+            <h3>II. Chi Tiết Mô Đun & Hàm</h3>
+            <ul>
+                <li><a href="#lib-h">6. Khai Báo Trung Tâm (lib.h)</a></li>
+                <li><a href="#rdt-packet">7. Mô Đun Gói Tin RDT Packet</a></li>
+                <li><a href="#data-channel">8. Mô Đun Kênh Dữ Liệu RDT</a></li>
+                <li><a href="#session">9. Quản Lý Phiên (Session)</a></li>
+                <li><a href="#cmd-handler">10. Bộ Xử Lý 28 Lệnh FTP</a></li>
+                <li><a href="#hash-util">11. Mã Băm SHA-256 (BCrypt)</a></li>
+                <li><a href="#server-control">12. Điều Khiển Phía Server</a></li>
+                <li><a href="#server-main">13. Server Main</a></li>
+                <li><a href="#client-control">14. Điều Khiển Phía Client</a></li>
+                <li><a href="#client-main">15. Client Main</a></li>
+            </ul>
+        </div>
+
+        <!-- MAIN CONTENT -->
+        <div class="main-content">
+
+            <!-- 1. OVERVIEW PICTURE -->
+            <div class="section-card" id="overview-picture">
+                <div class="section-title">
+                    <span>1. Bức Tranh Tổng Thể Kiến Trúc Dự Án</span>
+                    <span class="badge badge-overview">Architecture Overview</span>
+                </div>
+                <p>Chương trình mô phỏng kiến trúc chuẩn của <strong>FTP (RFC 959)</strong> kết hợp với tầng
+                    truyền tải tin cậy tự phát triển trên nền UDP:</p>
+
+                <div class="step-box" style="margin-top: 15px;">
+                    <h5>Hai Kênh Truyền Độc Lập:</h5>
+                    <ul class="step-list">
+                        <li><strong>Kênh Điều Khiển (Control Channel - TCP Port 8080):</strong> Dùng TCP để trao đổi các
+                            lệnh text giữa Client và Server (USER, PASS, STOR, RETR, PORT, PASV, ABOR,...). Cổng 8080 là
+                            cổng cố định (Well-known Port) duy nhất mà Client kết nối ban đầu. Kênh này duy trì xuyên
+                            suốt phiên làm việc.</li>
+                        <li><strong>Kênh Dữ Liệu (Data Channel - UDP RDT):</strong> Dùng UDP để truyền/nhận nội dung
+                            file thật hoặc danh sách thư mục. Hệ thống tự cài đặt giao thức tin cậy <strong>RDT
+                                (Reliable Data Transfer)</strong> với thuật toán <strong>Go-Back-N (Sliding
+                                Window)</strong> kết hợp <strong>Congestion Control (AIMD - Additive
+                                Increase/Multiplicative Decrease)</strong>, <strong>Internet
+                                Checksum 16-bit</strong> và <strong>Cumulative ACK</strong>.</li>
+                    </ul>
+                </div>
+
+                <div class="note-box">
+                    <strong>Mô hình Xử lý Đa Luồng (Thread-per-connection):</strong> Mỗi Client kết nối vào Server sẽ
+                    được cấp 1 Thread chính xử lý kết nối. Khi có lệnh truyền dữ liệu (STOR/RETR/...), Server tiếp tục
+                    tách thêm 1 <strong>Thread phụ (transferThread)</strong> để truyền dữ liệu qua UDP. Nhờ vậy, Kênh
+                    Điều Khiển chính hoàn toàn rảnh rỗi để nhận lệnh mới bất kỳ lúc nào (kể cả lệnh <code>ABOR</code> để
+                    hủy transfer đang chạy).
+                </div>
+
+                <p style="margin-top: 15px;"><strong>Cấu trúc dự án:</strong> <code>SERVER/</code> chứa mã nguồn Server;
+                    <code>CLIENT/</code> chứa mã nguồn Client. Các file <code>RdtPacket.h</code>,
+                    <code>RdtPacket.cpp</code>, <code>DataChannel.h</code>, <code>DataChannel.cpp</code> ở hai bên giống
+                    hệt nhau (byte-by-byte) do tính đối xứng của giao thức RDT.
+                </p>
+            </div>
+
+            <!-- 2. END TO END FLOW -->
+            <div class="section-card" id="end-to-end">
+                <div class="section-title">
+                    <span>2. Luồng Hoạt Động End-to-End Chi Tiết</span>
+                    <span class="badge badge-core">System Workflow</span>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">2.1 Bắt tay kết nối & Khởi tạo phiên</div>
+                    <ul class="step-list">
+                        <li>1. Server khởi động Winsock, tạo thư mục gốc <code>server_root/</code>, lắng nghe TCP cổng
+                            8080.</li>
+                        <li>2. Client kết nối tới Server qua IP và Port 8080.</li>
+                        <li>3. Server <code>accept()</code> kết nối -> Tạo luồng riêng (Detached Thread) chạy
+                            <code>ControlChannel::handleClient()</code>, phản hồi <code>220 Service ready</code>.
+                        </li>
+                        <li>4. Server khởi tạo đối tượng <code>Session</code> (lưu trạng thái Client) và
+                            <code>CommandHandler</code>.
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">2.2 Vòng lặp nhận và thực thi lệnh</div>
+                    <ul class="step-list">
+                        <li><strong>Client:</strong> Luồng chính đọc bàn phím (<code>ftp> </code>), luồng nền riêng
+                            (<code>receiverThread</code>) liên tục <code>recv()</code> câu trả lời từ Server. Tách 2
+                            luồng giúp bàn phím không bị khóa khi đang truyền file, cho phép gõ <code>ABOR</code> ngắt
+                            lệnh.</li>
+                        <li><strong>Server:</strong> Nhận dòng lệnh TCP -> Gọi <code>parseCmd()</code> tách lệnh và tham
+                            số -> Gọi <code>CommandHandler::handle()</code> thực thi qua enum <code>FtpCommand</code>.
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">2.3 Luồng truyền file (STOR / RETR / STOU / APPE)</div>
+                    <ul class="step-list">
+                        <li>1. Server nhận lệnh -> Tạo <code>DataChannel</code> (UDP), <code>bind</code> cổng 0 để OS
+                            cấp cổng ngẫu nhiên.</li>
+                        <li>2. Server lấy cổng thật bằng <code>getBoundPort()</code> và đính kèm vào phản hồi
+                            <code>150</code> qua chuỗi <code>" PORT=<n>"</code> (trừ chế độ PASV).
+                        </li>
+                        <li>3. Server tạo <code>transferThread</code> chạy ngầm truyền dữ liệu UDP -> Luồng chính tiếp
+                            tục lắng nghe TCP.</li>
+                        <li>4. Client nhận phản hồi <code>150</code> -> Đọc cổng ngẫu nhiên
+                            <code>parseEmbeddedPort()</code> -> Kích hoạt truyền dữ liệu RDT qua UDP.
+                        </li>
+                        <li>5. Hoàn tất -> Server gửi phản hồi <code>226 Transfer complete</code> (hoặc <code>426</code>
+                            nếu bị ngắt).</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- 3. RDT MECHANISM -->
+            <div class="section-card" id="rdt-mechanism">
+                <div class="section-title">
+                    <span>3. Cơ Chế RDT — Go-Back-N & Congestion Control AIMD</span>
+                    <span class="badge badge-core">Transport Layer Core</span>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">Cấu Trúc Gói Tin RDT Packet</div>
+                    <p>Header gói tin RDT gồm 9 Bytes định dạng Big-Endian:</p>
+                    <code
+                        style="display:block; padding: 10px; margin: 10px 0; text-align: center;">[seqNum: 4B] [flags: 1B] [checksum: 2B] [payloadLength: 2B] [payload: N Bytes]</code>
+                    <ul class="step-list">
+                        <li><code>seqNum</code>: Số thứ tự gói tin tăng dần (0, 1, 2...). Trong gói ACK là Cumulative
+                            ACK (seq lớn nhất nhận liên tục). Trong gói FIN là tổng số khối DATA đã gửi.</li>
+                        <li><code>flags</code>: Cờ phân loại: <code>FLAG_DATA (0x01)</code>,
+                            <code>FLAG_ACK (0x02)</code>, <code>FLAG_FIN (0x04)</code>.
+                        </li>
+                        <li><code>checksum</code>: Internet Checksum 16-bit (1's complement sum).</li>
+                        <li><code>payloadLength</code>: Kích thước byte thực tế phần dữ liệu.</li>
+                    </ul>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">Thuật Toán Go-Back-N & AIMD Phía Gửi (rdtSend)</div>
+                    <div class="step-box">
+                        <h5>Cơ chế cửa sổ trượt (Sliding Window):</h5>
+                        <ul class="step-list">
+                            <li>Toàn bộ file được chia nhỏ thành các khối tối đa 1024 Bytes
+                                (<code>RDT_MAX_PAYLOAD</code>) và đóng gói sẵn.</li>
+                            <li>Sử dụng 3 biến: <code>base</code> (biên trái cửa sổ), <code>nextSeq</code> (biên phải
+                                cửa sổ), <code>window</code> (kích thước cửa sổ hiện tại).</li>
+                            <li><strong>Timer duy nhất:</strong> Chỉ canh đo timeout cho gói <code>base</code> (gói cũ
+                                nhất chưa ACK) theo mốc thời gian 500ms (<code>RDT_TIMEOUT_MS</code>).</li>
+                            <li><strong>Poll Socket:</strong> Thực hiện <code>recvfrom()</code> kiểm tra ACK mỗi 50ms
+                                (<code>RDT_POLL_MS</code>).</li>
+                            <li><strong>AIMD Additive Increase:</strong> Mỗi khi nhận ACK hợp lệ trượt <code>base</code>
+                                tiến lên, tăng cửa sổ: <code>window = min(window + 1, RDT_MAX_WINDOW)</code> (tối đa
+                                32).</li>
+                            <li><strong>AIMD Multiplicative Decrease:</strong> Khi quá hạn timeout (500ms), giảm cửa sổ:
+                                <code>window = max(window / 2, RDT_MIN_WINDOW)</code> (tối thiểu 1) và <strong>gửi lại
+                                    toàn bộ các gói trong cửa sổ từ base đến nextSeq - 1</strong>.
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">Thuật Toán Go-Back-N Phía Nhận (rdtReceive)</div>
+                    <div class="step-box">
+                        <h5>Quy tắc tiếp nhận gói tin:</h5>
+                        <ul class="step-list">
+                            <li><strong>Đúng thứ tự (<code>seqNum == expectedSeq</code>):</strong> Nhận dữ liệu vào bộ
+                                nhớ, tăng <code>expectedSeq++</code>, gửi Cumulative ACK.</li>
+                            <li><strong>Trùng lặp (<code>seqNum < expectedSeq</code>):</strong> Bỏ qua dữ liệu, gửi lại
+                                Cumulative ACK cũ.</li>
+                            <li><strong>Bất ngờ / Lệch thứ tự (<code>seqNum > expectedSeq</code>):</strong> <strong>LOẠI
+                                    BỎ hoàn toàn gói tin, không đệm (Buffer)</strong>. Gửi Cumulative ACK cho gói hợp lệ
+                                cuối cùng.</li>
+                            <li><strong>Gói lỗi (Checksum Failure):</strong> Bỏ qua âm thầm, không phản hồi ACK để phía
+                                gửi tự Timeout.</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 4. DYNAMIC PORT -->
+            <div class="section-card" id="dynamic-port">
+                <div class="section-title">
+                    <span>4. Cơ Chế Thương Lượng Cổng UDP Ngẫu Nhiên (Ephemeral Port)</span>
+                    <span class="badge badge-shared">Networking Improvement</span>
+                </div>
+                <p>Khắc phục hoàn toàn xung đột cổng cố định khi mở nhiều Client trên cùng một máy tính:</p>
+                <ul class="step-list" style="margin-top: 10px;">
+                    <li><strong>Nguyên lý:</strong> Thay vì cố định cổng 8081/8082, khi tạo Socket UDP, ứng dụng gọi
+                        <code>bind()</code> với <code>port = 0</code>. Hệ điều hành tự động cấp phát 1 cổng ngẫu nhiên
+                        chưa sử dụng.
+                    </li>
+                    <li><strong>Đọc cổng thực tế:</strong> Gọi <code>getsockname()</code> qua hàm
+                        <code>getBoundPort()</code> để lấy số cổng OS vừa cấp.
+                    </li>
+                    <li><strong>Thông báo qua TCP:</strong> Server chèn <code>" PORT=<boundPort>"</code> vào phản hồi
+                        <code>150</code>. Client đọc chuỗi này để biết địa chỉ UDP Server đang chờ kết nối.
+                    </li>
+                    <li><strong>Tự động thương lượng ACTIVE (autoNegotiateActivePort):</strong> Khi người dùng gõ
+                        <code>RETR</code> ở phía Client mà chưa thiết lập PORT/PASV, Client tự động tạo Socket UDP ngẫu
+                        nhiên, lấy IP/Port và tự gửi ngầm lệnh <code>PORT</code> sang Server trước khi gửi lệnh
+                        <code>RETR</code>.
+                    </li>
+                </ul>
+            </div>
+
+            <!-- 5. TECH HIGHLIGHTS -->
+            <div class="section-card" id="tech-highlights">
+                <div class="section-title">
+                    <span>5. Kỹ Thuật Lõi & Bài Học Kinh Nghiệm</span>
+                    <span class="badge badge-core">Best Practices</span>
+                </div>
+                <div class="grid-2" style="display:grid; grid-template-columns:1fr 1fr; gap:15px;">
+                    <div class="func-box">
+                        <div class="func-name">Bảo Vệ Bộ Nhớ & Khóa Tranh Chấp</div>
+                        <p class="func-desc">Sử dụng <code>std::lock_guard&lt;std::mutex&gt;</code> cho
+                            <code>g_coutMutex</code> chống đè màn hình Console. Sử dụng
+                            <code>std::atomic&lt;SOCKET&gt;</code> bảo vệ đóng socket an toàn giữa nhiều luồng.
+                        </p>
+                    </div>
+                    <div class="func-box">
+                        <div class="func-name">Sửa Lỗi Double Free Crash</div>
+                        <p class="func-desc">Quản lý vòng đời con trỏ <code>DataChannel</code> bằng
+                            <code>std::shared_ptr</code>. Hàm <code>setActiveDataChannel()</code> chỉ lưu địa chỉ quan
+                            sát, tuyệt đối không gọi <code>delete</code> thủ công.
+                        </p>
+                    </div>
+                    <div class="func-box">
+                        <div class="func-name">Chống Tấn Công Path Traversal</div>
+                        <p class="func-desc">Sử dụng hàm <code>resolvePath()</code> chuẩn hóa bằng
+                            <code>lexically_normal()</code> và ánh xạ tuyệt đối với <code>fs::weakly_canonical()</code>
+                            dưới thư mục gốc <code>SERVER_ROOT</code>.
+                        </p>
+                    </div>
+                    <div class="func-box">
+                        <div class="func-name">Bảo Tồn Thứ Tự Lệnh TCP</div>
+                        <p class="func-desc">Gọi <code>joinPreviousTransfer()</code> đảm bảo luồng truyền file trước đó
+                            đã kết thúc hoàn toàn trước khi khởi tạo luồng truyền file mới.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 6. LIB.H -->
+            <div class="section-card" id="lib-h">
+                <div class="section-title">
+                    <span>6. Khai Báo Trung Tâm (lib.h)</span>
+                    <span class="badge badge-shared">Dùng Chung</span>
+                </div>
+                <p>Toàn bộ khai báo thư viện, kiểu dữ liệu, namespace và enum dùng chung cho dự án được tập trung duy
+                    nhất tại <code>lib.h</code>.</p>
+
+                <div class="func-box">
+                    <div class="func-name">Thư Viện Chuẩn C++ & Windows SDK</div>
+                    <table class="param-table">
+                        <tr>
+                            <th>Thư viện Header</th>
+                            <th>Mục đích sử dụng chính</th>
+                        </tr>
+                        <tr>
+                            <td><code>winsock2.h</code> / <code>ws2tcpip.h</code></td>
+                            <td>Các API mạng nền tảng của Windows (socket, bind, listen, accept, connect, send, recv,
+                                sendto, recvfrom, inet_ntop, inet_pton).</td>
+                        </tr>
+                        <tr>
+                            <td><code>windows.h</code> / <code>bcrypt.h</code></td>
+                            <td>Windows SDK & Cryptography Next Generation (CNG) API tính mã băm SHA-256 native.</td>
+                        </tr>
+                        <tr>
+                            <td><code>filesystem</code> (namespace fs)</td>
+                            <td>Thao tác đường dẫn, tạo/xóa thư mục, tính dung lượng file, duyệt thư mục an toàn.</td>
+                        </tr>
+                        <tr>
+                            <td><code>chrono</code> (namespace chr)</td>
+                            <td>Đồng hồ thời gian thực độ chính xác cao (steady_clock, system_clock) phục vụ RDT Timeout
+                                & timestamp.</td>
+                        </tr>
+                        <tr>
+                            <td><code>mutex</code> / <code>thread</code> / <code>atomic</code></td>
+                            <td>Quản lý đa luồng (Detached Thread), khóa Mutex in console chống tranh chấp
+                                <code>g_coutMutex</code>, biến Atomic bảo vệ socket.
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">Enum Class DataMode & FtpCommand</div>
+                    <ul class="step-list">
+                        <li><code>DataMode::NONE</code>: Chưa thiết lập chế độ data.</li>
+                        <li><code>DataMode::ACTIVE</code>: Chế độ Chủ Động (Client mở cổng ngẫu nhiên, báo Server qua
+                            <code>PORT</code>).
+                        </li>
+                        <li><code>DataMode::PASSIVE</code>: Chế độ Thụ Động (Server mở cổng dải 6000-6999, báo Client
+                            qua <code>PASV</code>).</li>
+                        <li><code>FtpCommand</code>: Enum định danh 28 câu lệnh FTP chuẩn.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- 7. RDT PACKET -->
+            <div class="section-card" id="rdt-packet">
+                <div class="section-title">
+                    <span>7. Mô Đun Gói Tin RDT (RdtPacket.h / RdtPacket.cpp)</span>
+                    <span class="badge badge-shared">Dùng Chung</span>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">uint16_t computeChecksum(const char* data, int length)</div>
+                    <div class="func-desc">Tính checksum kiểu Internet (1's complement sum) cho mảng byte.</div>
+                    <div class="step-box">
+                        <h5>Chi tiết thuật toán:</h5>
+                        <ul class="step-list">
+                            <li>1. Duyệt mảng byte theo từng cặp 2 bytes, ghép thành 1 số 16-bit Big-Endian
+                                <code>(data[i] << 8) | data[i+1]</code> và cộng dồn vào biến sum 32-bit.
+                            </li>
+                            <li>2. Nếu tổng số bytes là lẻ, byte cuối cùng được dồn lên 8 bit cao
+                                <code>data[i] << 8</code> (pad thêm byte 0x00 vào sau).
+                            </li>
+                            <li>3. Fold carry: Vòng lặp cộng phần tràn 16-bit cao vào 16-bit thấp
+                                <code>sum = (sum & 0xFFFF) + (sum >> 16)</code> cho đến khi không còn tràn.
+                            </li>
+                            <li>4. Thực hiện đảo bit <code>~(uint16_t)sum</code> và trả về kết quả 16-bit.</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">bool verifyChecksum(const char* data, int length)</div>
+                    <div class="func-desc">Xác minh tính toàn vẹn của gói tin đã serialize nhận được.</div>
+                    <p>Tính tổng 1's complement trên TOÀN BỘ mảng byte. Nếu gói tin không lỗi, tổng thu được phải bằng
+                        <code>0xFFFF</code> (đảo bit bằng 0). Trả về <code>true</code> nếu hợp lệ.
+                    </p>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">vector&lt;char&gt; serializePacket(const RdtPacket& pkt)</div>
+                    <div class="func-desc">Chuyển đổi struct <code>RdtPacket</code> thành mảng byte chuẩn mạng
+                        (Big-Endian) để gửi qua Socket UDP.</div>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">bool deserializePacket(const char* data, int length, RdtPacket& outPkt)</div>
+                    <div class="func-desc">Giải mã mảng byte nhận từ UDP Socket thành struct <code>RdtPacket</code> với
+                        đầy đủ các bước kiểm tra header và checksum.</div>
+                </div>
+            </div>
+
+            <!-- 8. DATA CHANNEL -->
+            <div class="section-card" id="data-channel">
+                <div class="section-title">
+                    <span>8. Mô Đun Kênh Dữ Liệu RDT (DataChannel.h / DataChannel.cpp)</span>
+                    <span class="badge badge-shared">Dùng Chung</span>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">bool DataChannel::start()</div>
+                    <div class="func-desc">Khởi tạo Socket UDP và Bind cổng. Khi truyền <code>port = 0</code>, Hệ điều
+                        hành tự động cấp phát một cổng ngẫu nhiên khả dụng.</div>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">unsigned short DataChannel::getBoundPort() const</div>
+                    <div class="func-desc">Truy vấn số cổng UDP thực tế mà OS đã cấp phát cho Socket bằng API
+                        <code>getsockname()</code>.
+                    </div>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">bool DataChannel::rdtSend(SOCKET s, const char* data, int len, const
+                        sockaddr_in& dest)</div>
+                    <div class="func-desc">Thực thi truyền dữ liệu tin cậy Go-Back-N kết hợp AIMD. Điều chỉnh cửa sổ
+                        trượt linh hoạt từ 1 đến 32, xử lý Timeout và Retransmit toàn bộ cửa sổ khi xảy ra mất gói.
+                    </div>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">int DataChannel::rdtReceive(SOCKET s, vector&lt;char&gt;& outData,
+                        sockaddr_in& senderAddr)</div>
+                    <div class="func-desc">Thực thi tiếp nhận dữ liệu Go-Back-NReceiver. Phản hồi Cumulative ACK, loại
+                        bỏ hoàn toàn các gói tin đến lệch thứ tự hoặc lỗi checksum.</div>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">bool sendFile(...) / receiveFile(...) / sendFileAfterHandshake(...) /
+                        sendProbe(...)</div>
+                    <div class="func-desc">Các hàm bọc cấp cao phục vụ đọc/ghi file trực tiếp ra đĩa cứng và hỗ trợ NAT
+                        Traversal (Probe) cho chế độ PASSIVE mode.</div>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">void DataChannel::stop()</div>
+                    <div class="func-desc">Đóng an toàn UDP Socket bằng thao tác Atomic Swap
+                        <code>udpSocket.exchange(INVALID_SOCKET)</code>, giải phóng lập tức các luồng đang bị block.
+                    </div>
+                </div>
+            </div>
+
+            <!-- 9. SESSION -->
+            <div class="section-card" id="session">
+                <div class="section-title">
+                    <span>9. Quản Lý Phiên Làm Việc (Session.h / Session.cpp)</span>
+                    <span class="badge badge-server">Server</span>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">Session Trạng Thái & Quản Lý Luồng Truyền File</div>
+                    <p class="func-desc">Lưu trữ <code>isLoggedIn</code>, <code>currentDir</code>,
+                        <code>dataMode</code>, <code>activeIp/activePort</code>, <code>passivePort</code>.
+                    </p>
+                    <ul class="step-list">
+                        <li><code>setActiveDataChannel(DataChannel* dc)</code>: Lưu con trỏ quan sát
+                            <code>activeDataChannel</code> (được bảo vệ bởi <code>dcMutex</code>). Nơi đây <strong>tuyệt
+                                đối không delete con trỏ</strong> để tránh lỗi Double Free.
+                        </li>
+                        <li><code>abortActiveTransfer()</code>: Được gọi khi có lệnh <code>ABOR</code>. Khóa mutex và
+                            gọi <code>stop()</code> trên <code>activeDataChannel</code> để hủy socket UDP ngầm.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- 10. CMD HANDLER -->
+            <div class="section-card" id="cmd-handler">
+                <div class="section-title">
+                    <span>10. Bộ Xử Lý 28 Lệnh FTP Server (CmdHandler.h / CmdHandler.cpp)</span>
+                    <span class="badge badge-server">Server</span>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">fs::path CommandHandler::resolvePath(const Session& s, const string& arg,
+                        string& outLogical)</div>
+                    <div class="func-desc">Bảo mật đường dẫn tuyệt đối: Ghép đường dẫn ảo với <code>s.getDir()</code>,
+                        chuẩn hóa qua <code>lexically_normal()</code>, và ánh xạ an toàn vào <code>SERVER_ROOT</code>
+                        qua <code>fs::weakly_canonical()</code>.</div>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">Bảng Chi Tiết Xử Lý 28 Câu Lệnh FTP</div>
+                    <table class="param-table">
+                        <tr>
+                            <th>Lệnh FTP</th>
+                            <th>Hàm Xử Lý</th>
+                            <th>Mô Tả Chi Tiết Chức Năng</th>
+                        </tr>
+                        <tr>
+                            <td>USER</td>
+                            <td><code>handleUser()</code></td>
+                            <td>Lưu tên đăng nhập vào Session, trả về <code>331 Username OK</code>.</td>
+                        </tr>
+                        <tr>
+                            <td>PASS</td>
+                            <td><code>handlePass()</code></td>
+                            <td>Đánh dấu <code>isLoggedIn = true</code>, trả về <code>230 Login successful</code>.</td>
+                        </tr>
+                        <tr>
+                            <td>PWD</td>
+                            <td><code>handlePwd()</code></td>
+                            <td>Trả về thư mục ảo hiện tại <code>257 "/dir"</code>.</td>
+                        </tr>
+                        <tr>
+                            <td>NOOP</td>
+                            <td><code>handleNoop()</code></td>
+                            <td>Lệnh ping giữ kết nối, trả về <code>200 NOOP OK</code>.</td>
+                        </tr>
+                        <tr>
+                            <td>QUIT</td>
+                            <td><code>handleQuit()</code></td>
+                            <td>Chờ luồng phụ hoàn tất (join) và trả về <code>221 Goodbye</code>.</td>
+                        </tr>
+                        <tr>
+                            <td>HELP</td>
+                            <td><code>handleHelp()</code></td>
+                            <td>Trả về danh sách cú pháp các lệnh được hỗ trợ.</td>
+                        </tr>
+                        <tr>
+                            <td>TYPE / MODE</td>
+                            <td><code>handleType() / handleMode()</code></td>
+                            <td>Thiết lập kiểu dữ liệu (A/I) và chế độ truyền (Stream).</td>
+                        </tr>
+                        <tr>
+                            <td>SIZE / MDTM / STAT</td>
+                            <td><code>handleSize/Mdtm/Stat()</code></td>
+                            <td>Truy vấn kích thước, thời gian sửa đổi và trạng thái file qua
+                                <code>std::filesystem</code>.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>STOR / RETR</td>
+                            <td><code>handleStor() / handleRetr()</code></td>
+                            <td>Upload/Download file: Tạo <code>DataChannel</code>, thông báo cổng ngẫu nhiên, tách
+                                <code>std::thread</code> ngầm truyền RDT.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>CWD / CDUP</td>
+                            <td><code>handleCwd() / handleCdup()</code></td>
+                            <td>Thay đổi thư mục hiện tại hoặc di chuyển lên thư mục cha.</td>
+                        </tr>
+                        <tr>
+                            <td>MKD / RMD</td>
+                            <td><code>handleMkd() / handleRmd()</code></td>
+                            <td>Tạo thư mục mới hoặc xóa thư mục rỗng bằng
+                                <code>fs::create_directory / fs::remove</code>.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>LIST / NLST</td>
+                            <td><code>handleList() / handleNlst()</code></td>
+                            <td>Duyệt và trả về danh sách file/thư mục đầy đủ hoặc rút gọn.</td>
+                        </tr>
+                        <tr>
+                            <td>STOU / APPE</td>
+                            <td><code>handleStou() / handleAppe()</code></td>
+                            <td>Upload file với tên tự động theo Timestamp hoặc ghi nối tiếp (Append) vào file cũ.</td>
+                        </tr>
+                        <tr>
+                            <td>DELE</td>
+                            <td><code>handleDele()</code></td>
+                            <td>Xóa file khỏi đĩa cứng bằng <code>fs::remove()</code>.</td>
+                        </tr>
+                        <tr>
+                            <td>RNFR / RNTO</td>
+                            <td><code>handleRnfr() / handleRnto()</code></td>
+                            <td>Đổi tên file 2 bước an toàn.</td>
+                        </tr>
+                        <tr>
+                            <td>HASH</td>
+                            <td><code>handleHash()</code></td>
+                            <td>Tính và trả về chuỗi băm SHA-256 của file bằng Windows CNG API.</td>
+                        </tr>
+                        <tr>
+                            <td>PORT / PASV</td>
+                            <td><code>handlePort() / handlePasv()</code></td>
+                            <td>Thiết lập chế độ ACTIVE (IP:Port Client) hoặc PASSIVE (Server mở port 6000-6999).</td>
+                        </tr>
+                        <tr>
+                            <td>ABOR</td>
+                            <td><code>handleAbor()</code></td>
+                            <td>Gọi <code>s.abortActiveTransfer()</code> đóng socket UDP để ngắt luồng truyền file ngay
+                                lập tức.</td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 11. HASH UTIL -->
+            <div class="section-card" id="hash-util">
+                <div class="section-title">
+                    <span>11. Mô Đun Mã Băm SHA-256 (HashUtil.h / HashUtil.cpp)</span>
+                    <span class="badge badge-server">Server</span>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">string computeFileSHA256(const string& filePath)</div>
+                    <div class="func-desc">Tính toán mã băm SHA-256 native sử dụng Windows Cryptography Next Generation
+                        (CNG) BCrypt API.</div>
+                    <div class="step-box">
+                        <h5>Các bước thực hiện BCrypt API:</h5>
+                        <p><code>BCryptOpenAlgorithmProvider</code> -> <code>BCryptGetProperty</code> ->
+                            <code>BCryptCreateHash</code> -> <code>BCryptHashData</code> ->
+                            <code>BCryptFinishHash</code>. Kết quả 32 bytes nhị phân được chuyển đổi thành chuỗi Hex 64
+                            ký tự.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 12. SERVER CONTROL CHANNEL -->
+            <div class="section-card" id="server-control">
+                <div class="section-title">
+                    <span>12. Kênh Điều Khiển Phía Server (ControlChannel.h / ControlChannel.cpp)</span>
+                    <span class="badge badge-server">Server</span>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">ControlChannel::run() & handleClient()</div>
+                    <div class="func-desc">Vòng lặp <code>accept()</code> liên tục nhận Client TCP mới. Mỗi Client chạy
+                        trong một luồng <code>std::thread</code> độc lập ở chế độ <code>detach()</code>. Đọc câu lệnh,
+                        gọi <code>CommandHandler::handle()</code> và gửi phản hồi.</div>
+                </div>
+            </div>
+
+            <!-- 13. SERVER MAIN -->
+            <div class="section-card" id="server-main">
+                <div class="section-title">
+                    <span>13. Server Main (Server.cpp)</span>
+                    <span class="badge badge-server">Server</span>
+                </div>
+                <div class="func-box">
+                    <div class="func-name">int main()</div>
+                    <div class="func-desc">Khởi tạo Winsock <code>WSAStartup</code>, tạo thư mục
+                        <code>server_root</code>, khởi chạy <code>ControlChannel control(8080)</code> và dọn dẹp tài
+                        nguyên khi kết thúc.
+                    </div>
+                </div>
+            </div>
+
+            <!-- 14. CLIENT CONTROL CHANNEL -->
+            <div class="section-card" id="client-control">
+                <div class="section-title">
+                    <span>14. Kênh Điều Khiển Phía Client (ControlChannel.h / ControlChannel.cpp)</span>
+                    <span class="badge badge-client">Client</span>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">Kiến Trúc 2 Luồng Phía Client</div>
+                    <ul class="step-list">
+                        <li><strong>Luồng chính (Keyboard Loop):</strong> Đọc câu lệnh nhập từ bàn phím
+                            (<code>cin</code>). Tách lệnh/đối số theo dấu cách đầu tiên. Tự động gọi
+                            <code>autoNegotiateActivePort()</code> nếu gõ RETR mà chưa PORT/PASV.
+                        </li>
+                        <li><strong>Luồng nền (receiverLoop):</strong> Nhận phản hồi từ Server. Khi nhận phản hồi
+                            <code>150</code>, tự động đọc cổng ngẫu nhiên <code>parseEmbeddedPort()</code> và kích hoạt
+                            <code>doDataTransfer()</code> truyền dữ liệu UDP ngầm mà không làm khóa bàn phím.
+                        </li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- 15. CLIENT MAIN -->
+            <div class="section-card" id="client-main">
+                <div class="section-title">
+                    <span>15. Client Main (Client.cpp)</span>
+                    <span class="badge badge-client">Client</span>
+                </div>
+                <div class="func-box">
+                    <div class="func-name">int main()</div>
+                    <div class="func-desc">Khởi tạo Winsock <code>WSAStartup</code>, kết nối TCP tới
+                        <code>127.0.0.1:8080</code> và khởi chạy giao diện điều khiển Client.
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+</body>
+
+</html>
