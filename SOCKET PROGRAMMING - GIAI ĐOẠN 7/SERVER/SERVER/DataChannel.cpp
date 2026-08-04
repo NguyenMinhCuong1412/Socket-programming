@@ -286,9 +286,10 @@ int DataChannel::rdtReceive(SOCKET s, std::vector<char>& outData, sockaddr_in& s
 	return (int)outData.size();
 }
 
-bool DataChannel::receiveFile(const string& filepath, bool append) {
+bool DataChannel::receiveFile(const string& filepath, bool append, bool isAscii) {
 	//Mở file để ghi dữ liệu nhận được từ Client
-	ios::openmode mode = ios::binary | (append ? ios::app : ios::trunc);
+	ios::openmode mode = (append ? ios::app : ios::trunc);
+	if (!isAscii) mode |= ios::binary;
 	ofstream out(filepath, mode);
 	if (!out.is_open()) {
 		cerr << format("550 File unavailable, cannot open '{}' for writing", filepath) << endl;
@@ -298,7 +299,7 @@ bool DataChannel::receiveFile(const string& filepath, bool append) {
 	SOCKET s = udpSocket.load();
 	if (s == INVALID_SOCKET) { out.close(); return false; }
 
-	// Nhận toàn bộ dữ liệu qua RDT
+	//Nhận toàn bộ dữ liệu qua RDT
 	vector<char> fileData;
 	sockaddr_in senderAddr;
 	int totalRecv = rdtReceive(s, fileData, senderAddr);
@@ -316,9 +317,11 @@ bool DataChannel::receiveFile(const string& filepath, bool append) {
 	return true;
 }
 
-bool DataChannel::sendFile(const string& filepath, const string& destIp, unsigned short destPort) {
+bool DataChannel::sendFile(const string& filepath, const string& destIp, unsigned short destPort, bool isAscii) {
 	//Mở file để đọc dữ liệu gửi tới Client
-	ifstream in(filepath, ios::binary);
+	ios::openmode mode = ios::in;
+	if (!isAscii) mode |= ios::binary;
+	ifstream in(filepath, mode);
 	if (!in.is_open()) {
 		cerr << format("550 File unavailable, cannot open '{}' for reading", filepath) << endl;
 		return false;
@@ -341,7 +344,7 @@ bool DataChannel::sendFile(const string& filepath, const string& destIp, unsigne
 	return rdtSend(s, fileData.data(), (int)fileData.size(), destAddr);
 }
 
-bool DataChannel::sendFileAfterHandshake(const string& filepath) {
+bool DataChannel::sendFileAfterHandshake(const string& filepath, bool isAscii) {
 	SOCKET s = udpSocket.load();
 	if (s == INVALID_SOCKET) return false;
 
@@ -360,7 +363,7 @@ bool DataChannel::sendFileAfterHandshake(const string& filepath) {
 	inet_ntop(AF_INET, &clientAddr.sin_addr, ipStr, INET_ADDRSTRLEN);
 	unsigned short learnedPort = ntohs(clientAddr.sin_port);
 
-	return sendFile(filepath, ipStr, learnedPort);
+	return sendFile(filepath, ipStr, learnedPort, isAscii);
 }
 
 bool DataChannel::sendProbe(const string& destIp, unsigned short destPort) {

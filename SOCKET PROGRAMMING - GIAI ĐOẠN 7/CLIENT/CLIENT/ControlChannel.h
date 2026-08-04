@@ -13,6 +13,7 @@ private:
 	atomic<unsigned short> myActivePort{ 0 };    //ACTIVE: port client tự bind (đã báo server qua PORT)
 	atomic<unsigned short> serverPasvPort{ 0 };  //PASSIVE: port server đã chọn (đọc từ phản hồi 227)
 	atomic<unsigned short> serverUploadPort{ 0 };//ACTIVE/NONE + STOR/APPE/STOU: cổng NGẪU NHIÊN server vừa bind, đọc được từ " PORT=<n>" nhúng trong reply "150"
+	atomic<bool> isAsciiMode{ true };            //Trạng thái truyền file: true = ASCII, false = BINARY
 
 	//Lệnh vừa gửi gần nhất - để thread nền biết cần làm STOR/RETR/... gì khi thấy "150"
 	mutex pendingMutex;

@@ -184,7 +184,6 @@ string CommandHandler::handleType(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     string t = arg;
     for (auto& c : t) c = toupper(c);
-    //Đều sử dụng BINARY để truyền - giản lược tối đa
     if (t != "A" && t != "I") return "501 Syntax error in parameters\r\n";
     s.setType(t);
     return format("200 Set type to {}\r\n", t);
@@ -273,8 +272,9 @@ string CommandHandler::handleStor(Session& s, const string& arg) {
     s.setActiveDataChannel(dc.get()); //Đăng ký để ABOR (thread khác) có thể đóng socket này
 
     //Chạy transfer thật ở luồng phụ -> luồng chính (đang đọc lệnh) rảnh ngay để nhận lệnh mới
-    transferThread = thread([this, &s, dc, target]() {
-        bool ok = dc->receiveFile(target.string()); //Server nhận dữ liệu từ Client
+    bool isAscii = (s.getType() == "A");
+    transferThread = thread([this, &s, dc, target, isAscii]() {
+        bool ok = dc->receiveFile(target.string(), false, isAscii); //Server nhận dữ liệu từ Client
         s.setActiveDataChannel(nullptr);
         dc->stop();
         this->sendIntermediate(ok ? "226 Transfer complete\r\n" : "426 Connection closed, transfer aborted\r\n");
@@ -306,11 +306,12 @@ string CommandHandler::handleRetr(Session& s, const string& arg) {
 
     string destIp = (mode == DataMode::ACTIVE) ? s.getActiveIp() : clientIp;
     unsigned short destPort = s.getActivePort(); //mode == ACTIVE (đã loại NONE ở trên; PASSIVE dùng sendFileAfterHandshake, không cần destPort)
+    bool isAscii = (s.getType() == "A");
 
-    transferThread = thread([this, &s, dc, target, mode, destIp, destPort]() {
+    transferThread = thread([this, &s, dc, target, mode, destIp, destPort, isAscii]() {
         bool ok = (mode == DataMode::PASSIVE)
-            ? dc->sendFileAfterHandshake(target.string())      //mode == PASSIVE
-            : dc->sendFile(target.string(), destIp, destPort); //mode == ACTIVE
+            ? dc->sendFileAfterHandshake(target.string(), isAscii)      //mode == PASSIVE
+            : dc->sendFile(target.string(), destIp, destPort, isAscii); //mode == ACTIVE
         s.setActiveDataChannel(nullptr);
         dc->stop();
         this->sendIntermediate(ok ? "226 Transfer complete\r\n" : "426 Connection closed, transfer aborted\r\n");
@@ -421,8 +422,9 @@ string CommandHandler::handleStou(Session& s) {
     sendIntermediate(appendPortIfNeeded(s, dc->getBoundPort(), format("150 FILE: {}\r\n", autoName))); 
     s.setActiveDataChannel(dc.get());
 
-    transferThread = thread([this, &s, dc, target, autoName]() {
-        bool ok = dc->receiveFile(target.string()); //Server nhận dữ liệu từ Client
+    bool isAscii = (s.getType() == "A");
+    transferThread = thread([this, &s, dc, target, autoName, isAscii]() {
+        bool ok = dc->receiveFile(target.string(), false, isAscii); //Server nhận dữ liệu từ Client
         s.setActiveDataChannel(nullptr);
         dc->stop();
         this->sendIntermediate(ok ? format("226 Transfer complete, stored as {}\r\n", autoName)
@@ -449,8 +451,9 @@ string CommandHandler::handleAppe(Session& s, const string& arg) {
     sendIntermediate(appendPortIfNeeded(s, dc->getBoundPort(), "150 File status okay, opening data connection\r\n"));
     s.setActiveDataChannel(dc.get());
 
-    transferThread = thread([this, &s, dc, target]() {
-        bool ok = dc->receiveFile(target.string(), true); //append == true -> mở file bằng ios::app
+    bool isAscii = (s.getType() == "A");
+    transferThread = thread([this, &s, dc, target, isAscii]() {
+        bool ok = dc->receiveFile(target.string(), true, isAscii); //append == true -> mở file bằng ios::app
         s.setActiveDataChannel(nullptr);
         dc->stop();
         this->sendIntermediate(ok ? "226 Transfer complete\r\n" : "426 Connection closed, transfer aborted\r\n");

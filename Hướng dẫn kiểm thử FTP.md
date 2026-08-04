@@ -1,0 +1,122 @@
+# Hướng dẫn Kiểm thử Hệ thống Hybrid FTP qua các lệnh CLI
+
+Tài liệu này hướng dẫn chi tiết cách kiểm thử các chức năng của hệ thống Hybrid FTP bằng cách nhập lệnh trực tiếp từ Client. Đối với các lệnh phức tạp, tài liệu cung cấp nhiều kịch bản thử nghiệm để bạn dễ dàng phát hiện lỗi và chứng minh tính ổn định của hệ thống với giáo viên.
+
+---
+
+## 1. NHÓM LỆNH XÁC THỰC & HỆ THỐNG CƠ BẢN
+
+### USER & PASS (Xác thực người dùng)
+*   **Kịch bản 1 (Trình tự đúng):**
+    1.  Gõ: `USER admin` -> Nhận phản hồi: `331 Username OK, need password`
+    2.  Gõ: `PASS 123456` -> Nhận phản hồi: `230 Login successful`
+*   **Kịch bản 2 (Sai trình tự):**
+    1.  Khởi động Client, gõ ngay: `PASS 123456` -> Phải nhận mã lỗi: `503 Bad sequence of commands` (Yêu cầu `USER` trước).
+*   **Kịch bản 3 (Tham số rỗng):**
+    1.  Gõ: `USER` (không kèm tên) -> Nhận lỗi: `501 Syntax error in parameters`
+
+### NOOP & HELP (Ping & Trợ giúp)
+*   **Kịch bản 1:** Gõ `NOOP` -> Nhận: `200 NOOP OK`
+*   **Kịch bản 2:** Gõ `HELP` -> Trả về danh sách 28 lệnh được hỗ trợ.
+*   **Kịch bản 3:** Gõ `HELP STOR` -> Trả về hướng dẫn cú pháp chi tiết của lệnh `STOR`.
+
+---
+
+## 2. NHÓM LỆNH PHỨC TẠP & KHÓ CHẨN ĐOÁN LỖI (CẦN KIỂM THỬ KỸ)
+
+### A. ABOR (Hủy truyền file đang chạy)
+Lệnh này khó kiểm tra vì thời gian truyền file trên localhost cực kì nhanh. Để kiểm thử tính năng đa nhiệm mới cập nhật và kiểm tra xem `ABOR` có hoạt động không:
+
+*   **Chuẩn bị:** Tạo 1 file dung lượng lớn (khoảng 200MB - 500MB) tên `large_file.zip` đặt vào thư mục làm việc của Client.
+*   **Kịch bản 1 (Hủy truyền file thành công):**
+    1.  Đăng nhập thành công.
+    2.  Gõ lệnh gửi file: `STOR large_file.zip`
+    3.  Ngay lập tức, bạn sẽ thấy tiến trình in ra: `[Transfer Status] Uploaded 5.0%...`
+    4.  Khi file đang tải (chưa hoàn thành), gõ ngay: `ABOR`
+    5.  **Kết quả mong đợi:**
+        *   Client in ra: `225 ABOR command successful`
+        *   Tiến trình in dừng lại.
+        *   Server in ra lỗi đóng kết nối (ví dụ: `426 Connection closed, transfer aborted`).
+        *   File `large_file.zip` trên Server sẽ bị dở dang (kích thước nhỏ hơn dung lượng gốc).
+*   **Kịch bản 2 (ABOR khi không truyền tải):**
+    1.  Gõ: `ABOR` khi không có file nào đang truyền.
+    2.  **Kết quả mong đợi:** Nhận phản hồi: `225 ABOR command successful` mà không làm sập kết nối TCP.
+
+### B. PORT & PASV (Chế độ Active / Passive)
+Đây là phần lõi của thiết kế FTP phân tách kênh. Rất dễ gặp lỗi mất kết nối UDP nếu xử lý IP/Port sai.
+
+*   **Kịch bản 1 (Kiểm tra Passive Mode mặc định của Client):**
+    1.  Khi gõ `RETR test.txt` mà chưa gõ lệnh `PORT` hay `PASV`.
+    2.  **Kết quả:** Nhờ cơ chế tự động thương lượng, Client sẽ tự phát lệnh `PORT` ngầm và hoàn thành tải file.
+*   **Kịch bản 2 (Chuyển đổi linh hoạt PASV sang PORT):**
+    1.  Gõ: `PASV` -> Server mở cổng UDP lắng nghe (ví dụ: 6000) và trả về `227 Entering Passive Mode (127,0,0,1,23,112)`.
+    2.  Không tải file ngay mà đổi ý, gõ lệnh thiết lập Active Mode thủ công: `PORT 127,0,0,1,250,20` (Cổng UDP của client sẽ là $250 \times 256 + 20 = 64020$).
+    3.  Gõ: `LIST` hoặc `RETR test.txt`.
+    4.  **Kết quả:** Việc truyền tải dữ liệu bắt buộc phải diễn ra qua cơ chế Active (Server kết nối tới cổng UDP client chỉ định). Hãy quan sát Console của Server xem nó báo kết nối tới client port 64020.
+*   **Kịch bản 3 (Tham số lệnh PORT sai định dạng):**
+    1.  Gõ `PORT 127,0,0,1` (thiếu cổng) -> Nhận lỗi `501 Syntax error in parameters`.
+    2.  Gõ `PORT 127,0,0,1,abc,xyz` -> Nhận lỗi `501 Syntax error in parameters`.
+    3.  Gõ `PORT 127,0,0,1,256,10` (phần tử vượt quá 255) -> Nhận lỗi `501 Syntax error in parameters`.
+
+### C. RNFR & RNTO (Đổi tên file theo quy trình 2 bước)
+Hệ thống lưu trạng thái tên file tạm thời trong `Session::renameFrom`. Cần kiểm thử các trường hợp chuyển đổi trạng thái:
+
+*   **Kịch bản 1 (Quy trình chuẩn):**
+    1.  Gõ: `RNFR old.txt` -> Trả về: `350 Requested file action pending further information`
+    2.  Gõ: `RNTO new.txt` -> Trả về: `250 Rename successful`
+*   **Kịch bản 2 (Gọi RNTO không qua bước RNFR):**
+    1.  Gõ thẳng: `RNTO new.txt` -> Trả về: `503 Bad sequence of commands`
+*   **Kịch bản 3 (Đè lệnh RNFR liên tiếp):**
+    1.  Gõ: `RNFR fileA.txt` (Server lưu trạng thái đổi tên fileA).
+    2.  Đổi ý, gõ tiếp: `RNFR fileB.txt` (Server phải cập nhật đè trạng thái thành fileB).
+    3.  Gõ: `RNTO fileC.txt`.
+    4.  **Kết quả:** Chỉ có `fileB.txt` bị đổi tên thành `fileC.txt`. `fileA.txt` vẫn giữ nguyên.
+*   **Kịch bản 4 (Lệnh xen giữa):**
+    1.  Gõ: `RNFR old.txt`
+    2.  Gõ lệnh khác: `PWD` -> Server báo thư mục hiện tại.
+    3.  Gõ: `RNTO new.txt`.
+    4.  **Kết quả:** Vẫn đổi tên thành công vì lệnh `PWD` không làm reset trạng thái `renameFrom`.
+
+### D. HASH (Xác thực toàn vẹn dữ liệu)
+Được dùng để chứng minh UDP RDT không làm mất hay sai lệch bất cứ byte dữ liệu nào của file.
+
+*   **Kịch bản 1 (Kiểm thử file văn bản & file nhị phân):**
+    1.  Tải lên file `image.png` bằng lệnh `STOR image.png`.
+    2.  Gõ lệnh HASH trên client: `HASH image.png`.
+    3.  **Kết quả:** Ghi lại mã SHA-256 trả về (Ví dụ: `213 SHA-256 a1b2c3d4...`).
+    4.  Sử dụng một công cụ hash bên ngoài (như PowerShell `Get-FileHash image.png`) trên máy Client để so sánh. Hai mã Hash này bắt buộc phải trùng khớp hoàn hảo.
+*   **Kịch bản 2 (Lỗi đường dẫn hoặc Thư mục):**
+    1.  Gõ `HASH non_exist.txt` -> Nhận lỗi: `550 File unavailable, non_exist.txt not found`.
+    2.  Gõ `HASH my_folder` (đường dẫn là thư mục chứ không phải file) -> Nhận lỗi: `550 File unavailable, my_folder not found` (chỉ băm file regular).
+
+### E. APPE (Ghi tiếp dữ liệu - Append)
+*   **Kịch bản 1 (File chưa tồn tại):**
+    1.  Gõ: `APPE append_test.txt` và truyền file nội dung "Hello".
+    2.  **Kết quả:** File được tạo mới hoàn toàn với nội dung "Hello".
+*   **Kịch bản 2 (Ghi tiếp vào file đã có):**
+    1.  Gõ tiếp: `APPE append_test.txt` và truyền file nội dung "World".
+    2.  **Kết quả:** File `append_test.txt` trên Server phải có nội dung nối liền là "HelloWorld" (hoặc xuống dòng tùy định dạng truyền).
+*   **Kịch bản 3 (APPE đối với file Nhị phân):**
+    1.  Thiết lập `TYPE I`.
+    2.  Thực hiện `APPE` nối hai file ảnh nhỏ. File kết quả phải tăng dung lượng bằng tổng 2 file cộng lại.
+
+### F. STOU (Tải lên với tên ngẫu nhiên của Server)
+*   **Kịch bản 1 (Đảm bảo tính độc nhất):**
+    1.  Gõ `STOU` (không truyền tham số tên file) và thực hiện tải lên một file.
+    2.  **Kết quả mong đợi:**
+        *   Server phản hồi cổng cùng tên file tự sinh dạng: `150 FILE: file_17228000000.dat`
+        *   Gõ `LIST` để xác nhận file đó đã tồn tại trên Server.
+    3.  Gõ tiếp `STOU` lần nữa. Tên file sinh ra bắt buộc phải khác tên file lần 1.
+
+---
+
+## 3. NHÓM LỆNH ĐIỀU HƯỚNG & QUẢN LÝ THƯ MỤC
+
+### CWD, CDUP, PWD, MKD, RMD
+*   **Kiểm thử Path Traversal (Lỗi bảo mật nghiêm trọng):**
+    *   **Kịch bản:** Cố tình truy cập vượt quá thư mục gốc `server_root`.
+    *   **Thao tác:** Đăng nhập, gõ: `CWD ../../../../` hoặc `CWD ..` liên tiếp khi đang ở thư mục gốc của Server.
+    *   **Kết quả mong đợi:** Lệnh không được phép gây lỗi crash hệ thống. Đường dẫn logic hiển thị qua `PWD` vẫn phải là `/`. Thư mục vật lý không được thoát ra ngoài thư mục `server_root` đã định nghĩa trên đĩa cứng (được bảo vệ nhờ hàm `resolvePath` sử dụng `lexically_normal`).
+*   **Xóa thư mục không rỗng:**
+    *   **Thao tác:** Tạo thư mục `test_dir`, tải một file vào trong đó. Sau đó dùng lệnh `RMD test_dir`.
+    *   **Kết quả mong đợi:** Trả về lỗi: `550 Can't remove 'test_dir', directory not empty`. Thư mục chỉ được xóa khi trống hoàn toàn.

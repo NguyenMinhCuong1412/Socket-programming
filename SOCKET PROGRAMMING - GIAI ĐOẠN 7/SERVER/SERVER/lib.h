@@ -1,8 +1,8 @@
 #pragma once
 
 #include <iostream>
-#include <format>
-#include <vector>
+#include <format>       
+#include <vector>       
 #include <string>
 #include <sstream>      //Làm việc với string và luồng chuỗi (string stream)
 #include <fstream>      //Đọc/Ghi file
@@ -26,7 +26,6 @@
 #pragma comment(lib, "bcrypt.lib") //Liên kết thư viện mã hóa Windows CNG (Cryptography Next Generation)
 #pragma comment(lib, "ws2_32.lib") //Liên kết thư viện Winsock 2 (Windows Sockets 2) API
 
-
 using std::cerr, std::cout, std::cin,
 std::stoi, std::endl,
 std::format, std::toupper,
@@ -48,13 +47,15 @@ std::istreambuf_iterator,     //Con trỏ đặc biệt dùng để đọc trự
 std::hex,                     //Chuyển định dạng xuất/nhập số nguyên sang hệ thập lục phân (Hexadecimal - Cơ số 16)
 std::setfill,                 //Đặt ký tự lấp đầy (fill character) cho phần khoảng trống được tạo ra bởi std::setw
 std::setw,                    //Đặt độ rộng tối thiểu (width) cho dữ liệu tiếp theo sẽ xuất ra luồng
-std::mt19937,                 //Bộ sinh số giả ngẫu nhiên dựa trên thuật toán Mersenne Twister (chu kỳ cực dài $2^{19937}-1$)
+std::mt19937,                 //Bộ sinh số giả ngẫu nhiên dựa trên thuật toán Mersenne Twister (chu kỳ cực dài 2^{19937}-1)
 std::random_device,           //Lấy một chuỗi hạt giống (seed) ngẫu nhiên thực sự từ phần cứng máy tính
 std::uniform_int_distribution;//Nắn các số ngẫu nhiên thô từ std::mt19937 sao cho chúng phân bố đồng đều (uniform distribution) trong một khoảng số nguyên [a, b] xác định
 
+//namespace: tầng dữ liệu quá sâu, các hàm quá nguy hiểm tới hệ thống máy tính, nên phải chi đích danh hàm bằng bí danh
 namespace fs = std::filesystem;
 namespace chr = std::chrono;
 
+//Constant Expression - Biểu thức hằng: kết quả luôn có sẵn để compiler lấy để tính toán, giảm thời gian chạy và CPU
 constexpr unsigned short CONTROL_PORT = 8080; //Server-TCP bind cổng cố định để nhận lệnh FTP từ Client-TCP  
 constexpr int CHUNK_SIZE = 1024;              //Kích thước tối đa của 1 gói tin TCP
 

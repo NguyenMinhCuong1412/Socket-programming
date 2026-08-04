@@ -1,0 +1,77 @@
+Yêu cầu chung trước khi thực hiện:
+- Đọc kĩ các file trong mã nguồn dự án
+- Phân tích và kiểm tra 
+- Sửa chữa và ghi vào 1 file đánh giá cuối cùng
+
+Thông tin chung:
+- Đồ án Socket Programming: Thiết kế và Triển khai Hybrid FTP
+- Môn học: Internetworking Protocol (Giao thức liên mạng)
+- Ngôn ngữ lập trình: C++
+- Thư viện: Chỉ được phép dùng các API socket cấp thấp, có sẵn (native) đi kèm với runtime của ngôn ngữ. Không được dùng các 
+  framework FTP dựng sẵn, thư viện truyền file bên thứ ba (ví dụ: KCP, QUIC, các wrapper FTP của libcurl).
+- Giao diện: CLI 
+- File nguồn mô tả đồ án: Socket_TV.docx
+
+Mô tả:
+- Thiết kế và triển khai hệ thống Hybrid FTP (File Transfer Protocol) 
+tách biệt tầng điều khiển (control plane) và tầng dữ liệu (data plane), 
+mô phỏng theo triết lý kiến trúc của chuẩn FTP thực tế (RFC 959).
+Xây dựng ứng dụng Client–Server hoàn chỉnh với hai kênh giao tiếp độc lập:
+   + Kênh điều khiển (Control Channel) - socket TCP: truyền lệnh, phản hồi, và trạng thái phiên làm việc.
+     Đặc tính hướng kết nối (connection-oriented) và truyền tin cậy của TCP đảm bảo việc thực thi lệnh tuần tự, 
+     theo dõi phiên ổn định, và báo cáo trạng thái chính xác trong suốt vòng đời của client.
+   + Kênh dữ liệu (Data Channel) - socket UDP: xây dựng giao thức tin cậy ở tầng ứng dụng (application-layer reliability 
+     sub- protocol) đặt trên nền UDP — không dùng bất kỳ thư viện ngoài nào, đảm bảo: không mất gói tin, phát hiện lỗi 
+     (corruption), loại bỏ gói trùng lặp, và đảm bảo đúng thứ tự gói tin.
+- Yêu cầu: 
+   + Kiểm tra logic hệ thống 2 kênh điều khiển và dữ liệu 
+   + Kiểm tra cấu trúc code của 2 kênh điều khiển và dữ liệu
+   + Kiểm tra mức độ hoàn thành của 2 kênh theo các yêu cầu ở trên dành cho 2 kênh
+   + Kiểm tra hiển thị trạng thái mạng, các lệnh thực thi và tiến trình truyền file
+   + Hướng dẫn cách cố định IP của Server khi có nhiều Client từ nhiều máy khác cần kết nối tới 
+   + Phần còn thiếu hoặc sai cần được sửa chữa và ghi vào 1 file đánh giá cuối cùng
+
+Mức đánh giá:
+- Cơ bản:
+   + Cơ chế xác thực: Nhận diện người dùng và xác minh quyền truy cập cơ bản.
+   + Kiểu dữ liệu & chế độ truyền: Xử lý file văn bản ASCII.
+   + Thao tác file: Upload và download một file duy nhất.
+   + Chế độ hoạt động: Cơ chế kết nối kênh dữ liệu cố định, đơn lẻ.
+- Nâng cao:
+   + Đa dạng dữ liệu: Xử lý file nhị phân (hình ảnh, video, file nén) mà không bị lỗi dữ liệu.
+   + Điều hướng thư mục & hỗ trợ cây thư mục: Duyệt, liệt kê, và quản lý cấu trúc thư mục lồng nhau.
+   + Chế độ hoạt động linh hoạt: Chuyển đổi hoặc tự động hóa giữa chế độ Active/Passive.
+   + Kiểm soát đồng thời (Concurrency Control): Server đa luồng (multi-threaded) hoặc đa tiến trình (multi-process), cô lập 
+     hoàn toàn từng phiên client.
+- Xuất sắc:
+   + Tầng UDP tin cậy tùy chỉnh (Custom Reliable UDP Layer - RDT): ACK, số thứ tự (sequence number), timeout/truyền lại 
+     (Stop-and-Wait, Go-Back-N, hoặc Selective Repeat).
+   + Kiểm soát tắc nghẽn/luồng (Congestion/Flow Control): Cơ chế Sliding Window hoặc tương đương để tránh làm ngập mạng.
+   + Kiểm tra tính toàn vẹn dữ liệu: So sánh hash MD5/SHA-256 đầu-cuối trước và sau khi truyền.
+- Yêu cầu: 
+   + Kiểm tra mức độ hoàn thành từng mức độ trong mã nguồn
+   + Kiểm tra mức độ hoàn thành từng yêu cầu trong từng mức đánh giá của mã nguồn
+   + Phần còn thiếu hoặc sai cần được sửa chữa và ghi vào 1 file đánh giá cuối cùng
+
+
+Lệnh FTP: các lệnh được chấp nhận trong đồ án gồm 28 mã lệnh được liệt kê trong File nguồn mô tả đồ án, các lệnh được truyền qua kênh điều khiển TCP.
+- Yêu cầu: 
+   + Kiểm tra mức độ đầy đủ của danh sách các lệnh FTP trong mã nguồn
+   + Kiểm tra logic các lệnh theo phần mô tả từng lệnh
+   + Phần còn thiếu hoặc sai cần được sửa chữa và ghi vào 1 file đánh giá cuối cùng
+
+Mã phản hồi chuẩn FTP: gồm 3 chữ số qua kênh điều khiển TCP, được liệt kê cơ bản trong File nguồn mô tả đồ án
+- Yêu cầu: 
+   + Kiểm tra độ chính xác mã phản hồi của từng lệnh
+   + Kiểm tra mức độ đầy đủ các mã phản hồi của từng lệnh
+   + Phần còn thiếu hoặc sai cần được sửa chữa và ghi vào 1 file đánh giá cuối cùng
+
+Báo cáo kĩ thuật - hướng dẫn từng mục sau đây
+1.Kịch bản ứng dụng & Tương tác giao thức — Sơ đồ tuần tự (sequence diagram) mô tả toàn bộ vòng đời TCP + UDP.
+2.Cấu trúc dữ liệu của toàn bộ đồ án — Định dạng gói tin điều khiển TCP, các trường header tùy chỉnh của UDP (số thứ tự, ACK, checksum, cờ flags, độ dài payload), cấu trúc quản lý phiên.
+3.Luồng xử lý chức năng (Lưu đồ - Flowcharts) — Logic điều phối luồng (thread-dispatch) của server, máy trạng thái (state machine) của bộ gửi/nhận UDP tin cậy, cơ chế chuyển đổi Active/Passive.
+4.Ma trận phân công công việc — Người phụ trách và người hỗ trợ cho từng thành phần kỹ thuật.
+5.Tự đánh giá & Đánh giá chéo (Peer Evaluation) — Nhận xét cá nhân bằng văn bản kèm theo tỷ lệ đóng góp đã thống nhất, tổng cộng 100%.
+6.Nhật ký sử dụng GenAI & Quá trình chỉnh sửa code (Phụ lục bắt buộc) — Các prompt chính xác đã dùng, kết quả AI thô, và các chỉnh sửa được ghi lại cho thấy sự phân tích, đánh giá có phản biện.
+7.Bằng chứng Demo ứng dụng — Ảnh chụp màn hình/log của quá trình upload, download, so sánh hash, bảng client đang kết nối, và kiểm thử phiên đồng thời.
+

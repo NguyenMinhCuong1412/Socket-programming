@@ -140,7 +140,7 @@ void ControlChannel::doDataTransfer(const string& cmdWord, const string& filenam
         unsigned short destPort = (dataMode.load() == DataMode::PASSIVE) ? serverPasvPort.load() : serverUploadPort.load();
         DataChannel dc(0); //port cục bộ ephemeral
         if (dc.start()) {
-            dc.sendFile(filename, serverIp, destPort);
+            dc.sendFile(filename, serverIp, destPort, isAsciiMode.load());
             dc.stop();
         }
     }
@@ -150,14 +150,14 @@ void ControlChannel::doDataTransfer(const string& cmdWord, const string& filenam
             DataChannel dc(0);
             if (dc.start()) {
                 dc.sendProbe(serverIp, serverPasvPort.load());
-                dc.receiveFile(filename);
+                dc.receiveFile(filename, false, isAsciiMode.load());
                 dc.stop();
             }
         }
         else if (mode == DataMode::ACTIVE) {
             DataChannel dc(myActivePort.load());
             if (dc.start()) {
-                dc.receiveFile(filename);
+                dc.receiveFile(filename, false, isAsciiMode.load());
                 dc.stop();
             }
         }
@@ -203,7 +203,9 @@ void ControlChannel::receiverLoop() {
                 cmdWord = pendingCmdWord;
                 filename = pendingArg;
             }
-            doDataTransfer(cmdWord, filename);
+            thread([this, cmdWord, filename]() {
+                this->doDataTransfer(cmdWord, filename);
+            }).detach();
         }
     }
 }
@@ -233,6 +235,11 @@ void ControlChannel::run() {
         string cmdWord = (sp == string::npos) ? input : input.substr(0, sp);
         for (auto& c : cmdWord) c = toupper(c);
         string cmdArg = (sp == string::npos) ? "" : input.substr(sp + 1);
+
+        if (cmdWord == "TYPE") {
+            if (cmdArg == "A" || cmdArg == "a") isAsciiMode.store(true);
+            else if (cmdArg == "I" || cmdArg == "i") isAsciiMode.store(false);
+        }
 
         if (cmdWord == "PORT") {
             unsigned short p;

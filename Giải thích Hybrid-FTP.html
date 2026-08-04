@@ -673,6 +673,7 @@
                         sockaddr_in& dest)</div>
                     <div class="func-desc">Thực thi truyền dữ liệu tin cậy Go-Back-N kết hợp AIMD. Điều chỉnh cửa sổ
                         trượt linh hoạt từ 1 đến 32, xử lý Timeout và Retransmit toàn bộ cửa sổ khi xảy ra mất gói.
+                        Đặc biệt, ở phía Client, hàm có cơ chế đo đếm thời gian thực và in ra tiến độ Upload (phần trăm hoàn thành, số lượng gói tin) định kỳ mỗi 1 giây.
                     </div>
                 </div>
 
@@ -680,7 +681,8 @@
                     <div class="func-name">int DataChannel::rdtReceive(SOCKET s, vector&lt;char&gt;& outData,
                         sockaddr_in& senderAddr)</div>
                     <div class="func-desc">Thực thi tiếp nhận dữ liệu Go-Back-NReceiver. Phản hồi Cumulative ACK, loại
-                        bỏ hoàn toàn các gói tin đến lệch thứ tự hoặc lỗi checksum.</div>
+                        bỏ hoàn toàn các gói tin đến lệch thứ tự hoặc lỗi checksum.
+                        Ở phía Client, hàm hỗ trợ hiển thị lũy kế số Bytes đã tải về (Download) định kỳ mỗi 1 giây ra console.</div>
                 </div>
 
                 <div class="func-box">
@@ -905,16 +907,17 @@
                 </div>
 
                 <div class="func-box">
-                    <div class="func-name">Kiến Trúc 2 Luồng Phía Client</div>
+                    <div class="func-name">Kiến Trúc Đa Luồng Phía Client (3 Luồng)</div>
                     <ul class="step-list">
                         <li><strong>Luồng chính (Keyboard Loop):</strong> Đọc câu lệnh nhập từ bàn phím
                             (<code>cin</code>). Tách lệnh/đối số theo dấu cách đầu tiên. Tự động gọi
-                            <code>autoNegotiateActivePort()</code> nếu gõ RETR mà chưa PORT/PASV.
+                            <code>autoNegotiateActivePort()</code> nếu gõ RETR mà chưa PORT/PASV. Luồng này hoạt động song song để người dùng gõ lệnh mới bất cứ lúc nào.
                         </li>
-                        <li><strong>Luồng nền (receiverLoop):</strong> Nhận phản hồi từ Server. Khi nhận phản hồi
-                            <code>150</code>, tự động đọc cổng ngẫu nhiên <code>parseEmbeddedPort()</code> và kích hoạt
-                            <code>doDataTransfer()</code> truyền dữ liệu UDP ngầm mà không làm khóa bàn phím.
+                        <li><strong>Luồng TCP Nhận (receiverLoop):</strong> Nhận phản hồi và mã trạng thái liên tục từ Server. Khi nhận phản hồi
+                            <code>150</code> (báo hiệu mở kênh truyền dữ liệu), luồng này sẽ kích hoạt
+                            <code>doDataTransfer()</code> chạy trong một luồng phụ tách biệt độc lập (Detached Thread).
                         </li>
+                        <li><strong>Luồng Truyền Tải Dữ Liệu Phụ (doDataTransfer Thread):</strong> Luồng được tạo dưới dạng bất đồng bộ (<code>std::thread(...).detach()</code>) đảm nhận nhiệm vụ truyền tải file qua UDP RDT. Nhờ tách luồng này, luồng TCP Nhận (receiverLoop) không bị block, cho phép Client tiếp tục nhận và xử lý các phản hồi tiếp theo từ Server (ví dụ: phản hồi của lệnh <code>ABOR</code> hoặc các lệnh thông tin khác).</li>
                     </ul>
                 </div>
             </div>

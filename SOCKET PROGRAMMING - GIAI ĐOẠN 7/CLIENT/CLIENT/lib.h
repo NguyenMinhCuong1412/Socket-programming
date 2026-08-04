@@ -8,8 +8,6 @@
 #include <fstream>      //Đọc/Ghi file
 #include <cctype>       //Làm việc với với char
 #include <ctime>        //Làm việc với thời gian - độ chính xác thấp
-#include <system_error> //Làm việc với mã lỗi hệ thống
-#include <filesystem>   //Làm việc với hệ thống file
 #include <chrono>       //Làm việc với thời gian - độ chính xác cao
 #include <mutex>        //Làm việc với Data Race (Xung đột dữ liệu) và Critical Section (Vùng tranh chấp) khi có nhiều luồng cùng truy cập vào một vùng nhớ
 #include <thread>       //Làm việc với luồng thực thi/tác vụ song song (parallel) hoặc đồng thời (concurrent) - cấp độ hệ điều hành 
@@ -18,12 +16,10 @@
 #include <winsock2.h>   //Windows Sockets 2: thư viện chính cung cấp các API nền tảng làm việc với Socket trên Windows 
 #include <ws2tcpip.h>   //Winsock 2 TCP/IP: thư viện bổ sung cung cấp các công cụ nâng cao chuyên dụng cho giao thức TCP/IP
 #include <windows.h>    //Nạp file header trung tâm của Windows SDK, cho phép chương trình C/C++ gọi và sử dụng các API hệ thống của Windows
-#include <bcrypt.h>     //Nạp file header chứa khai báo cho Windows CNG (Cryptography Next Generation) API - bộ công cụ mã hóa chính chủ của Microsoft Windows
 #include <cstdint>      //C Standard Integer Types: quản lý các kiểu dữ liệu số nguyên (integer) có kích thước cố định chính xác về số bit (Fixed-width integer types)
 #include <random>       //Random Number Generation: tạo ra các số ngẫu nhiên chất lượng cao và phân bố số ngẫu nhiên theo các quy luật thống kê
 #include <iomanip>      //Làm việc với định dạng xuất dữ liệu (setw, setfill, hex, ...)
 
-#pragma comment(lib, "bcrypt.lib") //Liên kết thư viện mã hóa Windows CNG (Cryptography Next Generation)
 #pragma comment(lib, "ws2_32.lib") //Liên kết thư viện Winsock 2 (Windows Sockets 2) API
 
 
@@ -38,7 +34,6 @@ std::istringstream,           //Input String Stream: đọc từ chuỗi -> bi�
 std::ifstream,                //Input File Stream: đọc từ file -> biến
 std::ofstream,                //Output File Stream: biến -> ghi ra file
 std::tm,                      //Cấu trúc lưu trữ các thành phần thời gian (time structure)
-std::error_code,              //Lưu trữ mã lỗi hệ thống (system error code)
 std::mutex,                   //Ổ khóa nhị phân (0/1) đại diện cho tài nguyên chung, tránh truy cập đồng thời từ nhiều luồng
 std::lock_guard,              //Bảo vệ tài nguyên chung không bị lấn chiếm, phải xếp hàng chờ 
 std::thread,                  //Tạo một Luồng chạy ngầm (Detached Thread) để xử lý kết nối từ một Client mới 
@@ -52,7 +47,6 @@ std::mt19937,                 //Bộ sinh số giả ngẫu nhiên dựa trên t
 std::random_device,           //Lấy một chuỗi hạt giống (seed) ngẫu nhiên thực sự từ phần cứng máy tính
 std::uniform_int_distribution;//Nắn các số ngẫu nhiên thô từ std::mt19937 sao cho chúng phân bố đồng đều (uniform distribution) trong một khoảng số nguyên [a, b] xác định
 
-namespace fs = std::filesystem;
 namespace chr = std::chrono;
 
 constexpr unsigned short CONTROL_PORT = 8080; //Server-TCP bind cổng cố định để nhận lệnh FTP từ Client-TCP  

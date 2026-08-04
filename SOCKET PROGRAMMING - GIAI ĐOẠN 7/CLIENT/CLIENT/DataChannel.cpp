@@ -65,6 +65,7 @@ bool DataChannel::rdtSend(SOCKET s, const char* data, int len, const sockaddr_in
 	int retryRounds = 0;               //Số vòng Go-Back-N đã kích hoạt (để giới hạn RDT_MAX_RETRIES)
 	bool timerRunning = false;
 	chr::steady_clock::time_point timerStart;
+	auto lastPrintTime = chr::steady_clock::now();
 
 	//PHASE 1: Gửi toàn bộ chunk DATA qua Go-Back-N
 	while (base < totalChunks) {
@@ -137,6 +138,13 @@ bool DataChannel::rdtSend(SOCKET s, const char* data, int len, const sockaddr_in
 				timerRunning = true;
 			}
 		}
+
+		auto now = chr::steady_clock::now();
+		if (chr::duration_cast<chr::milliseconds>(now - lastPrintTime).count() >= 1000) {
+			double percent = (totalChunks == 0) ? 100.0 : (base * 100.0 / totalChunks);
+			cout << format("\n[Transfer Status] Uploaded {:.1f}% ({}/{} chunks) ...", percent, base, totalChunks) << endl;
+			lastPrintTime = now;
+		}
 	}
 
 	//PHASE 2: Gửi FIN (Stop-and-Wait đơn giản, chỉ 1 gói duy nhất)
@@ -199,6 +207,7 @@ int DataChannel::rdtReceive(SOCKET s, std::vector<char>& outData, sockaddr_in& s
 
 	char recvBuf[RDT_HEADER_SIZE + RDT_MAX_PAYLOAD + 64];
 	int senderAddrLen = sizeof(senderAddr);
+	auto lastPrintTime = chr::steady_clock::now();
 
 	while (true) {
 		int byteRecv = recvfrom(s, recvBuf, sizeof(recvBuf), 0,
@@ -281,14 +290,21 @@ int DataChannel::rdtReceive(SOCKET s, std::vector<char>& outData, sockaddr_in& s
 			else cout << "[RDT-SIM] Dropped outgoing ACK seq=" << cumulativeAck << endl;
 
 		}
+
+		auto now = chr::steady_clock::now();
+		if (chr::duration_cast<chr::milliseconds>(now - lastPrintTime).count() >= 1000) {
+			cout << format("\n[Transfer Status] Downloaded {} bytes ...", outData.size()) << endl;
+			lastPrintTime = now;
+		}
 	}
 
 	return (int)outData.size();
 }
 
-bool DataChannel::receiveFile(const string& filepath, bool append) {
+bool DataChannel::receiveFile(const string& filepath, bool append, bool isAscii) {
 	//Mở file để ghi dữ liệu nhận được từ Client
-	ios::openmode mode = ios::binary | (append ? ios::app : ios::trunc);
+	ios::openmode mode = (append ? ios::app : ios::trunc);
+	if (!isAscii) mode |= ios::binary;
 	ofstream out(filepath, mode);
 	if (!out.is_open()) {
 		cerr << format("550 File unavailable, cannot open '{}' for writing", filepath) << endl;
@@ -316,9 +332,11 @@ bool DataChannel::receiveFile(const string& filepath, bool append) {
 	return true;
 }
 
-bool DataChannel::sendFile(const string& filepath, const string& destIp, unsigned short destPort) {
+bool DataChannel::sendFile(const string& filepath, const string& destIp, unsigned short destPort, bool isAscii) {
 	//Mở file để đọc dữ liệu gửi tới Client
-	ifstream in(filepath, ios::binary);
+	ios::openmode mode = ios::in;
+	if (!isAscii) mode |= ios::binary;
+	ifstream in(filepath, mode);
 	if (!in.is_open()) {
 		cerr << format("550 File unavailable, cannot open '{}' for reading", filepath) << endl;
 		return false;
@@ -341,7 +359,7 @@ bool DataChannel::sendFile(const string& filepath, const string& destIp, unsigne
 	return rdtSend(s, fileData.data(), (int)fileData.size(), destAddr);
 }
 
-bool DataChannel::sendFileAfterHandshake(const string& filepath) {
+bool DataChannel::sendFileAfterHandshake(const string& filepath, bool isAscii) {
 	SOCKET s = udpSocket.load();
 	if (s == INVALID_SOCKET) return false;
 
@@ -360,7 +378,7 @@ bool DataChannel::sendFileAfterHandshake(const string& filepath) {
 	inet_ntop(AF_INET, &clientAddr.sin_addr, ipStr, INET_ADDRSTRLEN);
 	unsigned short learnedPort = ntohs(clientAddr.sin_port);
 
-	return sendFile(filepath, ipStr, learnedPort);
+	return sendFile(filepath, ipStr, learnedPort, isAscii);
 }
 
 bool DataChannel::sendProbe(const string& destIp, unsigned short destPort) {
