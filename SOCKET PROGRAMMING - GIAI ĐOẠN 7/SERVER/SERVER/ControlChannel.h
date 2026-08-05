@@ -8,6 +8,7 @@ private:
 	SOCKET tcpSocket;       //socket phục vụ kênh điều khiển của Server-TCP
 
 	void handleClient(SOCKET clientSocket, string clientIp); //Quản lý toàn bộ vòng đời của kênh điều khiển cho một kết nối FTP từ Client-TCP
+	void adminConsoleLoop(); //Luồng nền đọc lệnh admin từ bàn phím Server ("sessions") để xem bảng session đang hoạt động
 public:
 	ControlChannel(unsigned short); 
 	~ControlChannel() = default;   

@@ -5,6 +5,7 @@ ControlChannel::ControlChannel(unsigned short port, string IP) {
     this->serverTcpPort = port;
     this->serverIp = IP;
     this->tcpSocket = INVALID_SOCKET;
+    this->currentDir = "/";
 }
 
 ControlChannel::~ControlChannel() {
@@ -85,6 +86,22 @@ bool ControlChannel::parseEmbeddedPort(const string& reply, unsigned short& outP
     return true;
 }
 
+fs::path ControlChannel::resolvePath(const string& arg) {
+    //Xác định tính tuyệt đối/tương đối của filename
+    fs::path logical = (!arg.empty() && arg[0] == '/')
+        ? fs::path(arg)                    //Đường dẫn tuyệt đối trong client_root
+        : fs::path(this->currentDir) / arg; //Đường dẫn tương đối dựa trên thư mục hiện tại
+
+    //Chuẩn hóa đường dẫn — lexically_normal không cho ".." vượt quá root
+    string normStr = logical.lexically_normal().generic_string();
+    if (normStr.empty()) normStr = "/";
+    if (normStr[0] != '/') return fs::path(); //an toàn kép, phòng trường hợp lạ
+
+    //Map sang đường dẫn vật lý thật: CLIENT_ROOT + phần sau dấu "/" đầu
+    fs::path relativePart = (normStr == "/") ? fs::path() : fs::path(normStr.substr(1));
+    return fs::weakly_canonical(CLIENT_ROOT / relativePart);
+}
+
 bool ControlChannel::autoNegotiateActivePort() {
     //Tự động làm những gì user sẽ phải gõ tay bằng lệnh "PORT h1,h2,h3,h4,p1,p2", dùng 1 cổng NGẪU NHIÊN do OS cấp
     SOCKET tmp = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -136,11 +153,14 @@ bool ControlChannel::autoNegotiateActivePort() {
 }
 
 void ControlChannel::doDataTransfer(const string& cmdWord, const string& filename) {
+    //Resolve đường dẫn file qua client_root — bảo vệ mã nguồn gốc
+    string localPath = resolvePath(filename).string();
+
     if (cmdWord == "STOR" || cmdWord == "STOU" || cmdWord == "APPE") {
         unsigned short destPort = (dataMode.load() == DataMode::PASSIVE) ? serverPasvPort.load() : serverUploadPort.load();
         DataChannel dc(0); //port cục bộ ephemeral
         if (dc.start()) {
-            dc.sendFile(filename, serverIp, destPort, isAsciiMode.load());
+            dc.sendFile(localPath, serverIp, destPort, isAsciiMode.load());
             dc.stop();
         }
     }
@@ -150,14 +170,14 @@ void ControlChannel::doDataTransfer(const string& cmdWord, const string& filenam
             DataChannel dc(0);
             if (dc.start()) {
                 dc.sendProbe(serverIp, serverPasvPort.load());
-                dc.receiveFile(filename, false, isAsciiMode.load());
+                dc.receiveFile(localPath, false, isAsciiMode.load());
                 dc.stop();
             }
         }
         else if (mode == DataMode::ACTIVE) {
             DataChannel dc(myActivePort.load());
             if (dc.start()) {
-                dc.receiveFile(filename, false, isAsciiMode.load());
+                dc.receiveFile(localPath, false, isAsciiMode.load());
                 dc.stop();
             }
         }
@@ -179,11 +199,24 @@ void ControlChannel::receiverLoop() {
                 else cerr << format("\n426 Connection closed, transfer aborted (WSA error: {})", WSAGetLastError()) << endl;
             }
             keepRunning = false;
+            //Đánh thức thread bàn phím (nếu đang chờ phản hồi) để nó không bị treo mãi khi mất kết nối
+            {
+                lock_guard<mutex> lock(replyMutex);
+                awaitingReply = false;
+            }
+            replyCv.notify_one();
             break;
         }
 
         string reply(buffer);
-        cout << "\nServer: " << reply << endl << "ftp> " << std::flush;
+        cout << "\nServer: " << reply << endl;
+
+        //Đã nhận được phản hồi cho lệnh vừa gửi -> báo cho thread bàn phím được in "ftp> " tiếp theo
+        {
+            lock_guard<mutex> lock(replyMutex);
+            awaitingReply = false;
+        }
+        replyCv.notify_one();
 
         if (reply.substr(0, 3) == "227") {
             unsigned short p;
@@ -259,9 +292,21 @@ void ControlChannel::run() {
             pendingArg = cmdArg;
         }
 
+        //Đánh dấu đang chờ phản hồi CHO LỆNH NÀY trước khi gửi đi, để không bỏ lỡ notify từ receiverLoop
+        {
+            lock_guard<mutex> lock(replyMutex);
+            awaitingReply = true;
+        }
+
         send(tcpSocket, input.c_str(), (int)input.size(), 0);
 
         if (cmdWord == "QUIT") { keepRunning = false; break; }
+
+        //Chờ đến khi receiverLoop() báo đã nhận phản hồi (hoặc mất kết nối) rồi mới in "ftp> " tiếp theo
+        {
+            unique_lock<mutex> lock(replyMutex);
+            replyCv.wait(lock, [this] { return !awaitingReply || !keepRunning; });
+        }
     }
 
     if (receiverThread.joinable()) receiverThread.join();

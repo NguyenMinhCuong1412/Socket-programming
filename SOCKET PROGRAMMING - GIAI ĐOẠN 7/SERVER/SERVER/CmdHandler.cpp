@@ -366,12 +366,14 @@ string CommandHandler::handleRmd(Session& s, const string& arg) {
     return format("250 \"{}\" directory removed\r\n", arg);
 }
 
-string CommandHandler::handleNlst(Session& s) {
+string CommandHandler::handleNlst(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
 
+    //arg rỗng -> resolvePath tự map về s.getDir() (thư mục hiện tại); arg có giá trị -> map về đúng [path] được chỉ định
     string logical;
-    fs::path physical = resolvePath(s, "", logical);
-    if (physical.empty() || !fs::exists(physical)) return "550 Directory not found\r\n";
+    fs::path physical = resolvePath(s, arg, logical);
+    if (physical.empty() || !fs::exists(physical) || !fs::is_directory(physical))
+        return format("550 {} : No such directory\r\n", arg.empty() ? "." : arg);
 
     string body;
     for (auto& entry : fs::directory_iterator(physical))   //directory_iterator: duyệt danh sách tệp/thư mục con nằm trong 
@@ -379,13 +381,14 @@ string CommandHandler::handleNlst(Session& s) {
     return format("150 Here comes the directory listing\r\n{}226 Transfer complete\r\n", body);
 }
 
-string CommandHandler::handleList(Session& s) {
+string CommandHandler::handleList(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
 
+    //arg rỗng -> resolvePath tự map về s.getDir() (thư mục hiện tại); arg có giá trị -> map về đúng [path] được chỉ định
     string logical;
-    fs::path physical = resolvePath(s, "", logical);
-    if (physical.empty() || !fs::exists(physical))
-        return "550 Directory not found\r\n";
+    fs::path physical = resolvePath(s, arg, logical);
+    if (physical.empty() || !fs::exists(physical) || !fs::is_directory(physical))
+        return format("550 {} : No such directory\r\n", arg.empty() ? "." : arg);
 
     string body;
     for (auto& entry : fs::directory_iterator(physical)) {
@@ -609,8 +612,8 @@ string CommandHandler::handle(Session& s, const string& com, const string& arg) 
     case FtpCommand::CDUP: return handleCdup(s);
     case FtpCommand::MKD:  return handleMkd(s, arg);
     case FtpCommand::RMD:  return handleRmd(s, arg);
-    case FtpCommand::LIST: return handleList(s);
-    case FtpCommand::NLST: return handleNlst(s);
+    case FtpCommand::LIST: return handleList(s, arg);
+    case FtpCommand::NLST: return handleNlst(s, arg);
     case FtpCommand::STOU: return handleStou(s);
     case FtpCommand::APPE: return handleAppe(s, arg);
     case FtpCommand::DELE: return handleDele(s, arg);

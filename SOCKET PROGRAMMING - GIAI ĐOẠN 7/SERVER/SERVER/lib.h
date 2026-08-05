@@ -4,6 +4,7 @@
 #include <format>       
 #include <vector>       
 #include <string>
+#include <map>          //Làm việc với bảng ánh xạ khóa-giá trị (dùng cho bảng session đang hoạt động)
 #include <sstream>      //Làm việc với string và luồng chuỗi (string stream)
 #include <fstream>      //Đọc/Ghi file
 #include <cctype>       //Làm việc với với char
@@ -40,6 +41,7 @@ std::tm,                      //Cấu trúc lưu trữ các thành phần thời
 std::error_code,              //Lưu trữ mã lỗi hệ thống (system error code)
 std::mutex,                   //Ổ khóa nhị phân (0/1) đại diện cho tài nguyên chung, tránh truy cập đồng thời từ nhiều luồng
 std::lock_guard,              //Bảo vệ tài nguyên chung không bị lấn chiếm, phải xếp hàng chờ 
+std::map,                     //Bảng ánh xạ khóa-giá trị có thứ tự (dùng lưu bảng session đang hoạt động)
 std::thread,                  //Tạo một Luồng chạy ngầm (Detached Thread) để xử lý kết nối từ một Client mới 
 std::shared_ptr,              //Smart Pointer: quản lý vòng đời của đối tượng (Object Lifetime) và cho phép nhiều con trỏ trỏ đến cùng một đối tượng trong bộ nhớ Heap, tránh rò rỉ bộ nhớ
 std::make_shared,             //Tạo một đối tượng trong 1 vùng bộ nhớ Heap và trả về một con trỏ thông minh (Smart Pointer) trỏ đến đối tượng đó, quản lý vòng đời của đối tượng

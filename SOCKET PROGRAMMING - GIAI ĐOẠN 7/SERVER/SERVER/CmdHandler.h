@@ -34,8 +34,8 @@ private:
     string handleCdup(Session&);                //Change to Parent Directory - Di chuyển lên thư mục cha của thư mục hiện tại
     string handleMkd(Session&, const string&);  //Make Directory - Tạo thư mục mới
     string handleRmd(Session&, const string&);  //Remove Directory - Xóa thư mục trống 
-    string handleList(Session&);                //Liệt kê toàn bộ danh sách tệp/thư mục ở vị trí hiện tại + thông tin chi tiết
-    string handleNlst(Session&);                //Liệt kê toàn bộ danh sách tệp/thư mục ở vị trí hiện tại
+    string handleList(Session&, const string&); //Liệt kê chi tiết tệp/thư mục ở [path] (rỗng = thư mục hiện tại)
+    string handleNlst(Session&, const string&); //Liệt kê tên tệp/thư mục ở [path] (rỗng = thư mục hiện tại)
     string handleStou(Session&);                //Store Unique = STOR + Server tự đặt 1 tên độc nhất 
     string handleAppe(Session&, const string&); //Append - Tải lên và gắn nối vào cuối 1 tệp đã tồn tại
     string handleDele(Session&, const string&); //Delete - Xóa 1 tệp 

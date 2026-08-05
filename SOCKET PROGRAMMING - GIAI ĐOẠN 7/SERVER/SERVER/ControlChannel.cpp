@@ -1,6 +1,7 @@
 #include "ControlChannel.h"
 #include "Session.h"
 #include "CmdHandler.h"
+#include "SessionRegistry.h"
 
 void ControlChannel::handleClient(SOCKET clientSocket, string clientIp) {
     //Tạo vòng đời cục bộ - bảo vệ các hàm bên trong tránh các luồng khác đụng vào
@@ -8,6 +9,10 @@ void ControlChannel::handleClient(SOCKET clientSocket, string clientIp) {
         lock_guard<mutex> lock(g_coutMutex); 
         cout << "Client connected from " << clientIp << endl;
     } //Đóng phạm vi - vòng đời kết thúc
+
+    //Đăng ký session này vào bảng session đang hoạt động + in bảng để giám khảo/log thấy ngay lúc connect
+    SessionRegistry::add(clientSocket, clientIp);
+    SessionRegistry::printTable();
 
     //Gửi mã chào FTP
     string greeting = "220 Service ready\r\n";
@@ -50,10 +55,38 @@ void ControlChannel::handleClient(SOCKET clientSocket, string clientIp) {
         string reply = handler.handle(session, command, argument);
         if (!reply.empty()) send(clientSocket, reply.c_str(), (int)reply.size(), 0);
 
+        //Cập nhật bảng session sau MỖI lệnh: user, trạng thái login, thư mục hiện tại, lệnh vừa chạy
+        SessionRegistry::update(clientSocket, session.getUserName(), session.getLoggedIn(), session.getDir(), command);
+
         if (command == "QUIT") break;
     }
 
+    //Gỡ session khỏi bảng + in lại bảng để log phản ánh đúng trạng thái mới nhất
+    SessionRegistry::remove(clientSocket);
+    SessionRegistry::printTable();
+
     closesocket(clientSocket); //Đóng riêng Client-TCP muốn thoát
+}
+
+void ControlChannel::adminConsoleLoop() {
+    //Luồng riêng đọc lệnh admin từ bàn phím Server, KHÔNG ảnh hưởng vòng lặp accept() chính
+    //Gõ "sessions" bất cứ lúc nào để xem bảng session đang hoạt động (phục vụ log/demo trực tiếp)
+    string line;
+    while (true) {
+        if (!getline(cin, line)) break;
+        string cmd = line;
+        for (auto& c : cmd) c = tolower((unsigned char)c);
+
+        if (cmd == "sessions" || cmd == "who") SessionRegistry::printTable();
+        else if (cmd == "help") {
+            lock_guard<mutex> lock(g_coutMutex);
+            cout << "Admin commands: sessions (show active session table) | help" << endl;
+        }
+        else if (!cmd.empty()) {
+            lock_guard<mutex> lock(g_coutMutex);
+            cout << "Unknown admin command. Type 'help'." << endl;
+        }
+    }
 }
 
 ControlChannel::ControlChannel(unsigned short port) {
@@ -96,6 +129,10 @@ bool ControlChannel::start() {
 }
 
 void ControlChannel::run() {
+    //Khởi động luồng console admin (gõ "sessions" để xem bảng session đang hoạt động) - detach vì sống cùng vòng đời server
+    thread(&ControlChannel::adminConsoleLoop, this).detach();
+    cout << "Type 'sessions' anytime to view the active session table (type 'help' for more)." << endl;
+
     while (true) {
         //Lấy thông tin Client-TCP được accept: các thông tin mạng + độ lớn vùng nhớ của Client-TCP 
         sockaddr_in clientAddr;

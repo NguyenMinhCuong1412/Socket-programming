@@ -312,9 +312,10 @@
                 <li><a href="#cmd-handler">10. Bộ Xử Lý 28 Lệnh FTP</a></li>
                 <li><a href="#hash-util">11. Mã Băm SHA-256 (BCrypt)</a></li>
                 <li><a href="#server-control">12. Điều Khiển Phía Server</a></li>
-                <li><a href="#server-main">13. Server Main</a></li>
-                <li><a href="#client-control">14. Điều Khiển Phía Client</a></li>
-                <li><a href="#client-main">15. Client Main</a></li>
+                <li><a href="#session-registry">13. Bảng Session Đang Hoạt Động</a></li>
+                <li><a href="#server-main">14. Server Main</a></li>
+                <li><a href="#client-control">15. Điều Khiển Phía Client</a></li>
+                <li><a href="#client-main">16. Client Main</a></li>
             </ul>
         </div>
 
@@ -583,6 +584,18 @@
                                 <code>g_coutMutex</code>, biến Atomic bảo vệ socket.
                             </td>
                         </tr>
+                        <tr>
+                            <td><code>condition_variable</code></td>
+                            <td>Đồng bộ giữa 2 luồng phía Client: Luồng chính (bàn phím) chờ
+                                <code>receiverLoop</code> báo hiệu đã nhận phản hồi Server rồi mới in prompt
+                                <code>ftp> </code> tiếp theo, tránh in prompt trùng lặp.</td>
+                        </tr>
+                        <tr>
+                            <td><code>map</code> (chỉ phía Server)</td>
+                            <td>Lưu bảng <code>SessionRegistry</code> — ánh xạ mỗi Socket Client đang kết nối sang
+                                thông tin session (IP, user, trạng thái login, thư mục hiện tại, lệnh gần nhất) để
+                                hiển thị Active Session Table.</td>
+                        </tr>
                     </table>
                 </div>
 
@@ -808,9 +821,11 @@
                             </td>
                         </tr>
                         <tr>
-                            <td>LIST / NLST</td>
-                            <td><code>handleList() / handleNlst()</code></td>
-                            <td>Duyệt và trả về danh sách file/thư mục đầy đủ hoặc rút gọn.</td>
+                            <td>LIST [path] / NLST [path]</td>
+                            <td><code>handleList(s, arg) / handleNlst(s, arg)</code></td>
+                            <td>Duyệt và trả về danh sách file/thư mục đầy đủ hoặc rút gọn. Nhận thêm tham số
+                                <code>[path]</code> tùy chọn qua <code>resolvePath(s, arg, logical)</code>: rỗng thì
+                                liệt kê thư mục hiện tại, có giá trị thì liệt kê đúng thư mục được chỉ định.</td>
                         </tr>
                         <tr>
                             <td>STOU / APPE</td>
@@ -882,12 +897,75 @@
                         trong một luồng <code>std::thread</code> độc lập ở chế độ <code>detach()</code>. Đọc câu lệnh,
                         gọi <code>CommandHandler::handle()</code> và gửi phản hồi.</div>
                 </div>
+
+                <div class="func-box">
+                    <div class="func-name">Tích Hợp Active Session Table (SessionRegistry)</div>
+                    <div class="func-desc"><code>handleClient()</code> đồng bộ trạng thái từng Client vào bảng
+                        session toàn cục xuyên suốt vòng đời kết nối:</div>
+                    <ul class="step-list">
+                        <li><code>SessionRegistry::add(clientSocket, clientIp)</code>: đăng ký session ngay lúc
+                            <code>accept()</code> thành công, in bảng ra console ngay lập tức.</li>
+                        <li><code>SessionRegistry::update(...)</code>: gọi sau <strong>mỗi</strong> lệnh xử lý xong,
+                            cập nhật username, trạng thái đăng nhập, thư mục hiện tại và lệnh vừa chạy.</li>
+                        <li><code>SessionRegistry::remove(...)</code>: gỡ session khỏi bảng khi Client ngắt kết nối
+                            (QUIT hoặc mất kết nối đột ngột), in lại bảng để phản ánh trạng thái mới nhất.</li>
+                    </ul>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">ControlChannel::adminConsoleLoop()</div>
+                    <div class="func-desc">Một luồng nền riêng (<code>detach()</code> song song với vòng lặp
+                        <code>accept()</code>) đọc lệnh admin từ bàn phím Server. Gõ <code>sessions</code> (hoặc
+                        <code>who</code>) bất cứ lúc nào để in ngay bảng session đang hoạt động ra console — phục vụ
+                        trực tiếp cho việc quan sát log và test đa Client đồng thời lúc demo.</div>
+                </div>
             </div>
 
-            <!-- 13. SERVER MAIN -->
+            <!-- 13. SESSION REGISTRY -->
+            <div class="section-card" id="session-registry">
+                <div class="section-title">
+                    <span>13. Bảng Session Đang Hoạt Động (SessionRegistry.h / SessionRegistry.cpp)</span>
+                    <span class="badge badge-server">Server</span>
+                </div>
+                <p>Module mới bổ sung để đáp ứng yêu cầu <em>"Server log displays connected client IPs, executed
+                    commands, and active session table"</em>: một bảng toàn cục theo dõi trạng thái sống của mọi
+                    Client-TCP đang kết nối, độc lập với các dòng log đơn lẻ vốn chỉ "trôi qua" trên console.</p>
+
+                <div class="func-box">
+                    <div class="func-name">struct ClientRecord</div>
+                    <div class="func-desc">Snapshot trạng thái 1 Client tại một thời điểm: <code>ip</code>,
+                        <code>userName</code>, <code>loggedIn</code>, <code>currentDir</code>,
+                        <code>lastCommand</code>, <code>connectedAt</code>.</div>
+                </div>
+
+                <div class="func-box">
+                    <div class="func-name">class SessionRegistry (static, toàn cục)</div>
+                    <div class="func-desc">Bảng <code>static map&lt;SOCKET, ClientRecord&gt; table</code>, bảo vệ
+                        bởi <code>static mutex mtx</code> riêng — vì nhiều Client (nhiều <code>thread</code>) có thể
+                        thêm/sửa/xóa đồng thời.</div>
+                    <ul class="step-list">
+                        <li><code>add(sock, ip)</code>: tạo bản ghi mới khi Client vừa <code>accept()</code>.</li>
+                        <li><code>update(sock, userName, loggedIn, currentDir, lastCommand)</code>: cập nhật sau mỗi
+                            lệnh; tự bỏ qua an toàn nếu socket đã bị <code>remove()</code> (tránh race hiếm).</li>
+                        <li><code>remove(sock)</code>: xóa bản ghi khi Client ngắt kết nối.</li>
+                        <li><code>count()</code>: trả về số session đang hoạt động — hữu ích khi test nhiều Client
+                            đồng thời.</li>
+                        <li><code>printTable()</code>: khóa cả <code>mtx</code> lẫn <code>g_coutMutex</code>, in ra
+                            bảng dạng cột (IP, User, LoggedIn, CurrentDir, LastCmd) kèm tổng số session.</li>
+                    </ul>
+                </div>
+
+                <div class="note-box">
+                    Bảng được in tự động mỗi khi có Client connect/disconnect, và có thể xem lại bất cứ lúc nào bằng
+                    lệnh admin <code>sessions</code> gõ trực tiếp trên console Server (xem
+                    <code>ControlChannel::adminConsoleLoop()</code> ở mục 12).
+                </div>
+            </div>
+
+            <!-- 14. SERVER MAIN -->
             <div class="section-card" id="server-main">
                 <div class="section-title">
-                    <span>13. Server Main (Server.cpp)</span>
+                    <span>14. Server Main (Server.cpp)</span>
                     <span class="badge badge-server">Server</span>
                 </div>
                 <div class="func-box">
@@ -899,10 +977,10 @@
                 </div>
             </div>
 
-            <!-- 14. CLIENT CONTROL CHANNEL -->
+            <!-- 15. CLIENT CONTROL CHANNEL -->
             <div class="section-card" id="client-control">
                 <div class="section-title">
-                    <span>14. Kênh Điều Khiển Phía Client (ControlChannel.h / ControlChannel.cpp)</span>
+                    <span>15. Kênh Điều Khiển Phía Client (ControlChannel.h / ControlChannel.cpp)</span>
                     <span class="badge badge-client">Client</span>
                 </div>
 
@@ -920,12 +998,35 @@
                         <li><strong>Luồng Truyền Tải Dữ Liệu Phụ (doDataTransfer Thread):</strong> Luồng được tạo dưới dạng bất đồng bộ (<code>std::thread(...).detach()</code>) đảm nhận nhiệm vụ truyền tải file qua UDP RDT. Nhờ tách luồng này, luồng TCP Nhận (receiverLoop) không bị block, cho phép Client tiếp tục nhận và xử lý các phản hồi tiếp theo từ Server (ví dụ: phản hồi của lệnh <code>ABOR</code> hoặc các lệnh thông tin khác).</li>
                     </ul>
                 </div>
+
+                <div class="func-box">
+                    <div class="func-name">Đồng Bộ Prompt "ftp>" (replyMutex / replyCv / awaitingReply)</div>
+                    <div class="func-desc">Sửa lỗi hiển thị 2 dòng <code>ftp></code> cho cùng 1 lệnh: trước đây Luồng
+                        chính in prompt kế tiếp <strong>ngay sau</strong> <code>send()</code>, trong khi phản hồi
+                        Server lại được in ra bởi <code>receiverLoop</code> ở một thời điểm khác — 2 dòng chạy đua
+                        (race condition) khiến prompt xuất hiện trước khi phản hồi kịp về.</div>
+                    <div class="step-box">
+                        <h5>Cơ chế đồng bộ bằng condition_variable:</h5>
+                        <ul class="step-list">
+                            <li>Trước khi <code>send()</code> lệnh đi, Luồng chính đặt cờ <code>awaitingReply =
+                                true</code> (bảo vệ bởi <code>replyMutex</code>).</li>
+                            <li>Sau <code>send()</code>, Luồng chính gọi <code>replyCv.wait(lock, [this]{ return
+                                !awaitingReply || !keepRunning; })</code> — <strong>chặn lại</strong>, chưa in
+                                <code>ftp> </code> tiếp theo.</li>
+                            <li><code>receiverLoop()</code> sau khi in xong <code>"Server: ..."</code> (hoặc khi mất
+                                kết nối) sẽ đặt <code>awaitingReply = false</code> rồi gọi
+                                <code>replyCv.notify_one()</code> để đánh thức Luồng chính.</li>
+                            <li>Kết quả: prompt <code>ftp> </code> tiếp theo chỉ xuất hiện <strong>sau khi</strong>
+                                phản hồi của Server đã được in ra màn hình, đúng thứ tự tự nhiên của phiên làm việc.</li>
+                        </ul>
+                    </div>
+                </div>
             </div>
 
-            <!-- 15. CLIENT MAIN -->
+            <!-- 16. CLIENT MAIN -->
             <div class="section-card" id="client-main">
                 <div class="section-title">
-                    <span>15. Client Main (Client.cpp)</span>
+                    <span>16. Client Main (Client.cpp)</span>
                     <span class="badge badge-client">Client</span>
                 </div>
                 <div class="func-box">

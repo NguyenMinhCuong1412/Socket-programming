@@ -19,10 +19,21 @@ private:
 	mutex pendingMutex;
 	string pendingCmdWord;
 	string pendingArg;
+	string currentDir;  //Thư mục ảo hiện tại trong client_root (bắt đầu "/")
+
+	//Giải quyết đường dẫn: map filename -> đường dẫn thật trong client_root
+	fs::path resolvePath(const string& arg);
 
 	//Thread nền: liên tục nhận phản hồi từ server + tự thực hiện data-transfer (không ảnh hưởng thread đọc bàn phím, cho phép gõ ABOR)
 	thread receiverThread;
 	atomic<bool> keepRunning{ true };
+
+	//Đồng bộ prompt "ftp>": sau khi gửi lệnh, thread bàn phím phải CHỜ đến khi
+	//receiverLoop() nhận được phản hồi tương ứng rồi mới được in "ftp> " tiếp theo,
+	//tránh in prompt 2 lần cho cùng 1 lệnh (prompt in trước, phản hồi in sau)
+	mutex replyMutex;
+	condition_variable replyCv;
+	bool awaitingReply = false;
 
 	bool parsePortArgLocal(const string& arg, unsigned short& outPort);
 	bool parsePasvReply(const string& reply, unsigned short& outPort);

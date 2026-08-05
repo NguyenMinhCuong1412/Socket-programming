@@ -148,6 +148,7 @@
     <ClCompile Include="Server.cpp" />
     <ClCompile Include="Session.cpp" />
     <ClCompile Include="RdtPacket.cpp" />
+    <ClCompile Include="SessionRegistry.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="CmdHandler.h" />
@@ -157,6 +158,7 @@
     <ClInclude Include="lib.h" />
     <ClInclude Include="Session.h" />
     <ClInclude Include="RdtPacket.h" />
+    <ClInclude Include="SessionRegistry.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
