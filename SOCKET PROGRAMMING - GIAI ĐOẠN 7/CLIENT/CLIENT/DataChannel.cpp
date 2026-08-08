@@ -8,7 +8,7 @@ DataChannel::DataChannel(unsigned short port) {
 unsigned short DataChannel::getBoundPort() const {
 	SOCKET s = udpSocket.load();
 	if (s == INVALID_SOCKET) return 0;
-	sockaddr_in local;
+	sockaddr_in local = {};
 	int len = sizeof(local);
 	if (getsockname(s, (sockaddr*)&local, &len) == SOCKET_ERROR) return 0;
 	return ntohs(local.sin_port);
@@ -22,8 +22,11 @@ bool DataChannel::start() {
 		return false;
 	}
 
+	BOOL reuse = TRUE;
+	setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuse, sizeof(reuse));
+
 	//Định danh địa chỉ Server-UDP
-	sockaddr_in serverAddrUdp;
+	sockaddr_in serverAddrUdp = {};
 	serverAddrUdp.sin_family = AF_INET;
 	serverAddrUdp.sin_addr.s_addr = INADDR_ANY;
 	serverAddrUdp.sin_port = htons(this->udpPort);
@@ -39,12 +42,12 @@ bool DataChannel::start() {
 	return true;
 }
 
-bool DataChannel::rdtSend(SOCKET s, const char* data, int len, const sockaddr_in& dest) {
-	uint32_t totalChunks = (len <= 0) ? 0 : (uint32_t)((len + RDT_MAX_PAYLOAD - 1) / RDT_MAX_PAYLOAD);
+bool DataChannel::rdtSend(SOCKET s, const char* data, size_t len, const sockaddr_in& dest) {
+	uint32_t totalChunks = (len == 0) ? 0 : (uint32_t)((len + RDT_MAX_PAYLOAD - 1) / RDT_MAX_PAYLOAD);
 	vector<vector<char>> serializedPkts(totalChunks);
 	for (uint32_t i = 0; i < totalChunks; i++) {
-		int offset = (int)i * RDT_MAX_PAYLOAD;
-		int chunkSize = min(RDT_MAX_PAYLOAD, len - offset);
+		size_t offset = (size_t)i * RDT_MAX_PAYLOAD;
+		size_t chunkSize = min((size_t)RDT_MAX_PAYLOAD, len - offset);
 
 		RdtPacket pkt;
 		pkt.seqNum = i;
@@ -71,9 +74,17 @@ bool DataChannel::rdtSend(SOCKET s, const char* data, int len, const sockaddr_in
 	while (base < totalChunks) {
 		//Gửi thêm gói mới miễn còn nằm trong giới hạn cửa sổ
 		while (nextSeq < totalChunks && nextSeq < base + (uint32_t)window) {
-			if (!shouldSimulateLoss())
-				sendto(s, serializedPkts[nextSeq].data(), (int)serializedPkts[nextSeq].size(), 0,
+			if (!shouldSimulateLoss()) {
+				int sent = sendto(s, serializedPkts[nextSeq].data(), (int)serializedPkts[nextSeq].size(), 0,
 					(const sockaddr*)&dest, sizeof(dest));
+				if (sent == SOCKET_ERROR) {
+					int err = WSAGetLastError();
+					if (err != WSAECONNRESET) {
+						cerr << "[RDT] sendto failed with error: " << err << endl;
+						return false;
+					}
+				}
+			}
 			else cout << "[RDT-SIM] Dropped outgoing DATA packet seq=" << nextSeq << endl;
 			nextSeq++;
 		}
@@ -87,18 +98,28 @@ bool DataChannel::rdtSend(SOCKET s, const char* data, int len, const sockaddr_in
 
 		//Chờ ACK, poll ngắn mỗi vòng
 		char ackBuf[RDT_HEADER_SIZE + 64];
-		sockaddr_in ackFrom;
+		sockaddr_in ackFrom = {};
 		int ackFromLen = sizeof(ackFrom);
 		int ackLen = recvfrom(s, ackBuf, sizeof(ackBuf), 0, (sockaddr*)&ackFrom, &ackFromLen);
 
 		if (ackLen == SOCKET_ERROR) {
 			int err = WSAGetLastError();
+			if (err == WSAECONNRESET) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(50));
+				continue; // Bỏ qua lỗi ICMP Port Unreachable
+			}
 			if (err != WSAETIMEDOUT) return false; //Lỗi thật (socket bị đóng bởi ABOR, v.v.)
 			//Hết 1 chu kỳ poll mà chưa có ACK nào — sẽ kiểm tra timeout thật bên dưới
 		}
 		else if (shouldSimulateLoss()) cout << "[RDT-SIM] Dropped incoming ACK" << endl;
 
 		else {
+			// Chỉ xử lý ACK từ đúng endpoint nhận dữ liệu
+			if (ackFrom.sin_addr.s_addr != dest.sin_addr.s_addr ||
+				ackFrom.sin_port != dest.sin_port) {
+				continue;
+			}
+
 			RdtPacket ackPkt;
 			if (deserializePacket(ackBuf, ackLen, ackPkt) && (ackPkt.flags & FLAG_ACK)) {
 				//Cumulative ACK: ackPkt.seqNum = seq lớn nhất bên nhận đã nhận LIÊN TỤC.
@@ -131,7 +152,14 @@ bool DataChannel::rdtSend(SOCKET s, const char* data, int len, const sockaddr_in
 				//Đặc trưng Go-Back-N: gửi lại TOÀN BỘ cửa sổ hiện có, không chỉ 1 gói
 				for (uint32_t i = base; i < nextSeq; i++) {
 					if (!shouldSimulateLoss()) {
-						sendto(s, serializedPkts[i].data(), (int)serializedPkts[i].size(), 0, (const sockaddr*)&dest, sizeof(dest));
+						int sent = sendto(s, serializedPkts[i].data(), (int)serializedPkts[i].size(), 0, (const sockaddr*)&dest, sizeof(dest));
+						if (sent == SOCKET_ERROR) {
+							int err = WSAGetLastError();
+							if (err != WSAECONNRESET) {
+								cerr << "[RDT] GBN sendto failed: " << err << endl;
+								return false;
+							}
+						}
 					}
 				}
 				timerStart = chr::steady_clock::now();
@@ -164,17 +192,24 @@ bool DataChannel::rdtSend(SOCKET s, const char* data, int len, const sockaddr_in
 		for (int retry = 0; retry < RDT_MAX_RETRIES; retry++) {
 			if (!shouldSimulateLoss()) {
 				int sent = sendto(s, rawFin.data(), (int)rawFin.size(), 0, (const sockaddr*)&dest, sizeof(dest));
-				if (sent == SOCKET_ERROR) return false;
+				if (sent == SOCKET_ERROR) {
+					int err = WSAGetLastError();
+					if (err != WSAECONNRESET) return false;
+				}
 			}
 			else cout << "[RDT-SIM] Dropped outgoing FIN packet seq=" << totalChunks << endl;
 
 			char ackBuf[RDT_HEADER_SIZE + 64];
-			sockaddr_in ackFrom;
+			sockaddr_in ackFrom = {};
 			int ackFromLen = sizeof(ackFrom);
 			int ackLen = recvfrom(s, ackBuf, sizeof(ackBuf), 0, (sockaddr*)&ackFrom, &ackFromLen);
 
 			if (ackLen == SOCKET_ERROR) {
 				int err = WSAGetLastError();
+				if (err == WSAECONNRESET) {
+					std::this_thread::sleep_for(std::chrono::milliseconds(50));
+					continue; // Bỏ qua lỗi ICMP Port Unreachable
+				}
 				if (err == WSAETIMEDOUT) {
 					cout << "[RDT] Timeout waiting for FIN-ACK, retransmit (" << (retry + 1) << "/" << RDT_MAX_RETRIES << ")" << endl;
 					continue;
@@ -182,6 +217,12 @@ bool DataChannel::rdtSend(SOCKET s, const char* data, int len, const sockaddr_in
 				return false;
 			}
 			if (shouldSimulateLoss()) { cout << "[RDT-SIM] Dropped incoming FIN-ACK" << endl; continue; }
+
+			// Chỉ xử lý FIN-ACK từ đúng endpoint nhận dữ liệu
+			if (ackFrom.sin_addr.s_addr != dest.sin_addr.s_addr ||
+				ackFrom.sin_port != dest.sin_port) {
+				continue;
+			}
 
 			RdtPacket ackPkt;
 			if (!deserializePacket(ackBuf, ackLen, ackPkt)) continue;
@@ -201,6 +242,9 @@ int DataChannel::rdtReceive(SOCKET s, std::vector<char>& outData, sockaddr_in& s
 	uint32_t expectedSeq = 0;
 	outData.clear();
 
+	bool senderLearned = false;
+	sockaddr_in learnedSender = {};
+
 	//Timeout dài cho receiver (chờ hoạt động từ sender) — sender sẽ Go-Back-N nếu ACK bị mất
 	int timeout = RDT_TIMEOUT_MS * (RDT_MAX_RETRIES + 1);
 	setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
@@ -219,6 +263,9 @@ int DataChannel::rdtReceive(SOCKET s, std::vector<char>& outData, sockaddr_in& s
 				cerr << "[RDT] Receiver timeout — sender may have disconnected" << endl;
 				return -1;
 			}
+			if (err == WSAECONNRESET) {
+				continue; // Bỏ qua lỗi ICMP Port Unreachable
+			}
 			return -1; //Socket bị đóng (ABOR) hoặc lỗi thật
 		}
 		if (byteRecv == 0) continue; //Gói rỗng bất thường → bỏ qua
@@ -226,6 +273,16 @@ int DataChannel::rdtReceive(SOCKET s, std::vector<char>& outData, sockaddr_in& s
 		if (shouldSimulateLoss()) {
 			cout << "[RDT-SIM] Dropped incoming packet (" << byteRecv << " bytes)" << endl;
 			continue;
+		}
+
+		if (!senderLearned) {
+			learnedSender = senderAddr;
+			senderLearned = true;
+		} else {
+			if (senderAddr.sin_addr.s_addr != learnedSender.sin_addr.s_addr ||
+				senderAddr.sin_port != learnedSender.sin_port) {
+				continue;
+			}
 		}
 
 		RdtPacket pkt;
@@ -316,7 +373,7 @@ bool DataChannel::receiveFile(const string& filepath, bool append, bool isAscii)
 
 	// Nhận toàn bộ dữ liệu qua RDT
 	vector<char> fileData;
-	sockaddr_in senderAddr;
+	sockaddr_in senderAddr = {};
 	int totalRecv = rdtReceive(s, fileData, senderAddr);
 
 	if (totalRecv < 0) {
@@ -343,7 +400,7 @@ bool DataChannel::sendFile(const string& filepath, const string& destIp, unsigne
 	}
 
 	//Chuẩn bị địa chỉ đích (Client) để gửi dữ liệu qua UDP
-	sockaddr_in destAddr;
+	sockaddr_in destAddr = {};
 	destAddr.sin_family = AF_INET;
 	destAddr.sin_port = htons(destPort);
 	inet_pton(AF_INET, destIp.c_str(), &destAddr.sin_addr);
@@ -356,7 +413,7 @@ bool DataChannel::sendFile(const string& filepath, const string& destIp, unsigne
 	if (s == INVALID_SOCKET) return false;
 
 	//Gửi toàn bộ file qua RDT
-	return rdtSend(s, fileData.data(), (int)fileData.size(), destAddr);
+	return rdtSend(s, fileData.data(), fileData.size(), destAddr);
 }
 
 bool DataChannel::sendFileAfterHandshake(const string& filepath, bool isAscii) {
@@ -365,7 +422,7 @@ bool DataChannel::sendFileAfterHandshake(const string& filepath, bool isAscii) {
 
 	//Nhận probe qua RDT (client gửi 1 byte "R" qua rdtSend)
 	vector<char> probeData;
-	sockaddr_in clientAddr;
+	sockaddr_in clientAddr = {};
 	int probeLen = rdtReceive(s, probeData, clientAddr);
 
 	if (probeLen < 0) {
@@ -374,7 +431,7 @@ bool DataChannel::sendFileAfterHandshake(const string& filepath, bool isAscii) {
 	}
 
 	//Chuyển đổi địa chỉ IP từ dạng nhị phân sang chuỗi
-	char ipStr[INET_ADDRSTRLEN];
+	char ipStr[INET_ADDRSTRLEN] = {0};
 	inet_ntop(AF_INET, &clientAddr.sin_addr, ipStr, INET_ADDRSTRLEN);
 	unsigned short learnedPort = ntohs(clientAddr.sin_port);
 
@@ -386,7 +443,7 @@ bool DataChannel::sendProbe(const string& destIp, unsigned short destPort) {
 	if (s == INVALID_SOCKET) return false;
 
 	//Chuẩn bị địa chỉ đích (Server) để gửi gói tin "probe" qua UDP
-	sockaddr_in destAddr;
+	sockaddr_in destAddr = {};
 	destAddr.sin_family = AF_INET;
 	destAddr.sin_port = htons(destPort);
 	inet_pton(AF_INET, destIp.c_str(), &destAddr.sin_addr);
@@ -398,5 +455,8 @@ bool DataChannel::sendProbe(const string& destIp, unsigned short destPort) {
 
 void DataChannel::stop() {
 	SOCKET s = udpSocket.exchange(INVALID_SOCKET); //atomic swap: chỉ 1 thread thực sự đóng
-	if (s != INVALID_SOCKET) closesocket(s);
+	if (s != INVALID_SOCKET) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+		closesocket(s);
+	}
 }

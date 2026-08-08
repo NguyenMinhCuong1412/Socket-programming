@@ -75,7 +75,26 @@ fs::path CommandHandler::resolvePath(const Session& s, const string& arg, string
     //Map sang đường dẫn vật lý thật: SERVER_ROOT + phần sau dấu "/" đầu
     //Chặn path traversal 
     fs::path relativePart = (normStr == "/") ? fs::path() : fs::path(normStr.substr(1));
-    return fs::weakly_canonical(SERVER_ROOT / relativePart); //weakly_canonical: OK cả khi path chưa tồn tại
+    fs::path physical = fs::weakly_canonical(SERVER_ROOT / relativePart); //weakly_canonical: OK cả khi path chưa tồn tại
+
+    // Kiểm tra an toàn: Đảm bảo đường dẫn vật lý nằm trong SERVER_ROOT
+    fs::path canonicalRoot = fs::canonical(SERVER_ROOT);
+    string rootStr = canonicalRoot.generic_string();
+    string physStr = physical.generic_string();
+
+    string rootLower = rootStr;
+    for (auto& c : rootLower) c = tolower((unsigned char)c);
+    string physLower = physStr;
+    for (auto& c : physLower) c = tolower((unsigned char)c);
+
+    if (physLower.size() < rootLower.size() || 
+        physLower.compare(0, rootLower.size(), rootLower) != 0 ||
+        (physLower.size() > rootLower.size() && physStr[rootLower.size()] != '/')) {
+        outLogical.clear();
+        return fs::path();
+    }
+
+    return physical;
 }
 
 unsigned short CommandHandler::pickListenPort(Session& s) {
@@ -109,6 +128,8 @@ CommandHandler::~CommandHandler() { joinPreviousTransfer(); }
 
 string CommandHandler::handleUser(Session& s, const string& arg) {
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
+    s.setLoggedIn(false);
+    s.setRenameFrom("");
     s.setUserName(arg);
     return "331 Username OK, need password\r\n";
 }
@@ -256,7 +277,7 @@ string CommandHandler::handleStor(Session& s, const string& arg) {
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
 
     DataMode mode = s.getDataMode();
-    if (mode == DataMode::NONE) return "425 Can't open data connection: send PORT or PASV before RETR\r\n";
+    if (mode == DataMode::NONE) return "425 Can't open data connection: send PORT or PASV before STOR\r\n";
 
     string logical;
     fs::path target = resolvePath(s, arg, logical);
@@ -277,7 +298,13 @@ string CommandHandler::handleStor(Session& s, const string& arg) {
         bool ok = dc->receiveFile(target.string(), false, isAscii); //Server nhận dữ liệu từ Client
         s.setActiveDataChannel(nullptr);
         dc->stop();
-        this->sendIntermediate(ok ? "226 Transfer complete\r\n" : "426 Connection closed, transfer aborted\r\n");
+        if (s.isTransferAborted()) {
+            this->sendIntermediate("426 Connection closed, transfer aborted\r\n");
+            s.setTransferAborted(false);
+        } else {
+            this->sendIntermediate(ok ? "226 Transfer complete\r\n" : "426 Connection closed, transfer aborted\r\n");
+        }
+        s.resetDataMode();
         });
 
     return ""; 
@@ -314,7 +341,13 @@ string CommandHandler::handleRetr(Session& s, const string& arg) {
             : dc->sendFile(target.string(), destIp, destPort, isAscii); //mode == ACTIVE
         s.setActiveDataChannel(nullptr);
         dc->stop();
-        this->sendIntermediate(ok ? "226 Transfer complete\r\n" : "426 Connection closed, transfer aborted\r\n");
+        if (s.isTransferAborted()) {
+            this->sendIntermediate("426 Connection closed, transfer aborted\r\n");
+            s.setTransferAborted(false);
+        } else {
+            this->sendIntermediate(ok ? "226 Transfer complete\r\n" : "426 Connection closed, transfer aborted\r\n");
+        }
+        s.resetDataMode();
         });
 
     return "";
@@ -357,6 +390,8 @@ string CommandHandler::handleRmd(Session& s, const string& arg) {
 
     string logical;
     fs::path physical = resolvePath(s, arg, logical);
+    if (logical == "/" || physical == SERVER_ROOT)
+        return "550 Cannot remove root directory\r\n";
     if (physical.empty() || !fs::exists(physical) || !fs::is_directory(physical))
         return format("550 {} : No such directory\r\n", arg);
 
@@ -402,18 +437,22 @@ string CommandHandler::handleList(Session& s, const string& arg) {
 string CommandHandler::handleStou(Session& s) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
 
+    DataMode mode = s.getDataMode();
+    if (mode == DataMode::NONE) return "425 Can't open data connection: send PORT or PASV before STOU\r\n";
+
+
     //Server tự đặt tên file - KHÔNG dùng tên do Client gửi
     auto ms = chr::duration_cast<chr::milliseconds>(chr::system_clock::now().time_since_epoch()).count();
-    /*
-    system_clock::now(): lấy thời gian thực tế hiện tại của hệ thống máy tính
-    time_since_epoch(): tính khoảng thời gian trôi qua kể từ mốc Unix Epoch (C++, thường là 00:00:00 1/1/1970)
-    duration_cast<chr::milliseconds>(...): ép kiểu khoảng thời gian vừa lấy được sang đơn vị mili-giây
-    count(): Lấy ra giá trị số nguyên đại diện cho tổng số mili-giây đó
-    */
     string autoName = format("file_{}.dat", ms);
 
     string logical;
     fs::path target = resolvePath(s, autoName, logical);
+    int counter = 0;
+    while (!target.empty() && fs::exists(target)) {
+        counter++;
+        autoName = format("file_{}_{}.dat", ms, counter);
+        target = resolvePath(s, autoName, logical);
+    }
     if (target.empty()) return "550 Invalid path\r\n";
 
     joinPreviousTransfer();
@@ -430,8 +469,14 @@ string CommandHandler::handleStou(Session& s) {
         bool ok = dc->receiveFile(target.string(), false, isAscii); //Server nhận dữ liệu từ Client
         s.setActiveDataChannel(nullptr);
         dc->stop();
-        this->sendIntermediate(ok ? format("226 Transfer complete, stored as {}\r\n", autoName)
-            : string("426 Connection closed, transfer aborted\r\n"));
+        if (s.isTransferAborted()) {
+            this->sendIntermediate("426 Connection closed, transfer aborted\r\n");
+            s.setTransferAborted(false);
+        } else {
+            this->sendIntermediate(ok ? format("226 Transfer complete, stored as {}\r\n", autoName)
+                : string("426 Connection closed, transfer aborted\r\n"));
+        }
+        s.resetDataMode();
         });
 
     return "";
@@ -440,6 +485,10 @@ string CommandHandler::handleStou(Session& s) {
 string CommandHandler::handleAppe(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) return "501 Syntax error in parameters\r\n";
+
+    DataMode mode = s.getDataMode();
+    if (mode == DataMode::NONE) return "425 Can't open data connection: send PORT or PASV before APPE\r\n";
+
 
     string logical;
     fs::path target = resolvePath(s, arg, logical);
@@ -459,7 +508,13 @@ string CommandHandler::handleAppe(Session& s, const string& arg) {
         bool ok = dc->receiveFile(target.string(), true, isAscii); //append == true -> mở file bằng ios::app
         s.setActiveDataChannel(nullptr);
         dc->stop();
-        this->sendIntermediate(ok ? "226 Transfer complete\r\n" : "426 Connection closed, transfer aborted\r\n");
+        if (s.isTransferAborted()) {
+            this->sendIntermediate("426 Connection closed, transfer aborted\r\n");
+            s.setTransferAborted(false);
+        } else {
+            this->sendIntermediate(ok ? "226 Transfer complete\r\n" : "426 Connection closed, transfer aborted\r\n");
+        }
+        s.resetDataMode();
         });
 
     return "";
@@ -486,10 +541,12 @@ string CommandHandler::handleRnfr(Session& s, const string& arg) {
 
     string logical;
     fs::path target = resolvePath(s, arg, logical);
+    if (logical == "/" || target == SERVER_ROOT)
+        return "550 Cannot rename root directory\r\n";
     if (target.empty() || !fs::exists(target))
         return format("550 {} : No such file or directory\r\n", arg);
 
-    s.setRenameFrom(arg); //lưu tên gốc (dạng arg gốc) để RNTO tự resolve lại
+    s.setRenameFrom(logical); //lưu tên gốc (dạng logical tuyệt đối) để RNTO tự resolve lại
     return "350 Requested file action pending further information\r\n";
 }
 
@@ -564,14 +621,18 @@ string CommandHandler::handlePasv(Session& s) {
     s.setPassiveMode(port);
 
     //Lấy IP thật của Server theo góc nhìn của Client này, từ chính control socket đang kết nối
-    sockaddr_in localAddr;
+    sockaddr_in localAddr = {};
     int len = sizeof(localAddr);
     getsockname(clientSocket, (sockaddr*)&localAddr, &len);
-    char ipStr[INET_ADDRSTRLEN];
+    char ipStr[INET_ADDRSTRLEN] = { 0 };
     inet_ntop(AF_INET, &localAddr.sin_addr, ipStr, INET_ADDRSTRLEN);
+    string ip(ipStr);
+    if (ip == "0.0.0.0" || ip.empty()) {
+        ip = "127.0.0.1";
+    }
 
     vector<int> ipParts;
-    stringstream ipss(ipStr);
+    stringstream ipss(ip);
     string seg;
     while (getline(ipss, seg, '.')) ipParts.push_back(std::stoi(seg));
     while (ipParts.size() < 4) ipParts.push_back(0);

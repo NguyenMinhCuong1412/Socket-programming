@@ -20,7 +20,7 @@ int main(int argc, char* argv[]) {
     cout << "Client root: " << CLIENT_ROOT.string() << endl;
 
     //Khởi tạo kênh điều khiển - TCP
-    ControlChannel control(CONTROL_PORT, "172.20.10.3");
+    ControlChannel control(CONTROL_PORT, "127.0.0.1");
     if (!control.start()) {
         WSACleanup();
         return 1;

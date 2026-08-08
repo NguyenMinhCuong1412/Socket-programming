@@ -20,7 +20,7 @@ bool ControlChannel::start() {
         return false;
     }
 
-    sockaddr_in serverAddr;
+    sockaddr_in serverAddr = {};
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_port = htons(this->serverTcpPort);
 
@@ -157,6 +157,11 @@ void ControlChannel::doDataTransfer(const string& cmdWord, const string& filenam
     string localPath = resolvePath(filename).string();
 
     if (cmdWord == "STOR" || cmdWord == "STOU" || cmdWord == "APPE") {
+        if (!fs::exists(localPath) || !fs::is_regular_file(localPath)) {
+            cerr << "550 File unavailable, local file not found: " << filename << endl;
+            dataMode = DataMode::NONE;
+            return;
+        }
         unsigned short destPort = (dataMode.load() == DataMode::PASSIVE) ? serverPasvPort.load() : serverUploadPort.load();
         DataChannel dc(0); //port cục bộ ephemeral
         if (dc.start()) {
@@ -185,10 +190,13 @@ void ControlChannel::doDataTransfer(const string& cmdWord, const string& filenam
             cerr << "425 Can't open data connection: no PORT/PASV negotiated for this RETR" << endl;
         }
     }
+    dataMode = DataMode::NONE;
 }
 
 void ControlChannel::receiverLoop() {
     char buffer[1024];
+    string streamBuffer = "";
+
     while (keepRunning) {
         ZeroMemory(buffer, sizeof(buffer));
         int byteRecv = recv(tcpSocket, buffer, sizeof(buffer) - 1, 0);
@@ -208,37 +216,53 @@ void ControlChannel::receiverLoop() {
             break;
         }
 
-        string reply(buffer);
-        cout << "\nServer: " << reply << endl;
+        streamBuffer.append(buffer, byteRecv);
 
-        //Đã nhận được phản hồi cho lệnh vừa gửi -> báo cho thread bàn phím được in "ftp> " tiếp theo
-        {
-            lock_guard<mutex> lock(replyMutex);
-            awaitingReply = false;
-        }
-        replyCv.notify_one();
+        //Cắt và xử lý từng dòng phản hồi từ Server
+        size_t pos = 0;
+        while ((pos = streamBuffer.find('\n')) != string::npos) {
+            string reply = streamBuffer.substr(0, pos);
+            streamBuffer.erase(0, pos + 1);
+            while (!reply.empty() && (reply.back() == '\r' || reply.back() == '\n')) reply.pop_back();
 
-        if (reply.substr(0, 3) == "227") {
-            unsigned short p;
-            if (parsePasvReply(reply, p)) {
-                serverPasvPort = p;
-                dataMode = DataMode::PASSIVE;
+            if (reply.empty()) continue;
+
+            cout << "\nServer: " << reply << endl;
+
+            string code = (reply.size() >= 3) ? reply.substr(0, 3) : "";
+            bool isStatusCode = (reply.size() >= 3 && isdigit((unsigned char)reply[0]) &&
+                                 isdigit((unsigned char)reply[1]) && isdigit((unsigned char)reply[2]));
+
+            if (code == "227") {
+                unsigned short p;
+                if (parsePasvReply(reply, p)) {
+                    serverPasvPort = p;
+                    dataMode = DataMode::PASSIVE;
+                }
             }
-        }
 
-        if (reply.substr(0, 3) == "150") {
-            unsigned short p;
-            if (parseEmbeddedPort(reply, p)) serverUploadPort = p;
+            if (code == "150") {
+                unsigned short p;
+                if (parseEmbeddedPort(reply, p)) serverUploadPort = p;
 
-            string cmdWord, filename;
-            {
-                lock_guard<mutex> lock(pendingMutex);
-                cmdWord = pendingCmdWord;
-                filename = pendingArg;
+                string cmdWord, filename;
+                {
+                    lock_guard<mutex> lock(pendingMutex);
+                    cmdWord = pendingCmdWord;
+                    filename = pendingArg;
+                }
+                thread([this, cmdWord, filename]() {
+                    this->doDataTransfer(cmdWord, filename);
+                }).detach();
             }
-            thread([this, cmdWord, filename]() {
-                this->doDataTransfer(cmdWord, filename);
-            }).detach();
+            else if (isStatusCode) {
+                //Phản hồi kết thúc chuẩn (không phải 150) -> báo cho thread bàn phím được in "ftp> " tiếp theo
+                {
+                    lock_guard<mutex> lock(replyMutex);
+                    awaitingReply = false;
+                }
+                replyCv.notify_one();
+            }
         }
     }
 }
@@ -298,7 +322,8 @@ void ControlChannel::run() {
             awaitingReply = true;
         }
 
-        send(tcpSocket, input.c_str(), (int)input.size(), 0);
+        string cmdLine = input + "\r\n";
+        send(tcpSocket, cmdLine.c_str(), (int)cmdLine.size(), 0);
 
         if (cmdWord == "QUIT") { keepRunning = false; break; }
 
@@ -309,7 +334,7 @@ void ControlChannel::run() {
         }
     }
 
-    if (receiverThread.joinable()) receiverThread.join();
+    stop(); //Đóng socket trước để receiverThread thoát recv() và join không bị treo (tránh deadlock)
 }
 
 void ControlChannel::stop() {
@@ -317,5 +342,8 @@ void ControlChannel::stop() {
     if (this->tcpSocket != INVALID_SOCKET) {
         closesocket(this->tcpSocket);
         this->tcpSocket = INVALID_SOCKET;
+    }
+    if (receiverThread.joinable() && receiverThread.get_id() != std::this_thread::get_id()) {
+        receiverThread.join();
     }
 }

@@ -24,41 +24,52 @@ void ControlChannel::handleClient(SOCKET clientSocket, string clientIp) {
     handler.setControlSocket(clientSocket);
     handler.setClientIp(clientIp);
     char buffer[1024] = { 0 }; //Khởi tạo vùng nhớ cố định 
+    string streamBuffer = "";
+    bool shouldQuit = false;
 
-    while (true) {
+    while (!shouldQuit) {
         ZeroMemory(buffer, sizeof(buffer)); //Làm sạch vùng nhớ nhận lệnh
 
         //Đọc dữ liệu từ socket do Client-TCP gửi và kiểm tra
         int byteRecv = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
-        if (byteRecv == 0) {
+        if (byteRecv <= 0) {
             lock_guard<mutex> lock(g_coutMutex);
-            cout << format("Client {} disconnected", clientIp) << endl;
-            break;
-        }
-        else if (byteRecv < 0) {
-            lock_guard<mutex> lock(g_coutMutex);
-            cerr << format("426 Connection closed, transfer aborted (WSA error: {})", WSAGetLastError()) << endl;
+            if (byteRecv == 0) cout << format("Client {} disconnected", clientIp) << endl;
+            else cerr << format("426 Connection closed, transfer aborted (WSA error: {})", WSAGetLastError()) << endl;
             break;
         }
 
-        //Phân tích lệnh
-        string raw(buffer), command, argument;
-        parseCmd(raw, command, argument);
+        streamBuffer.append(buffer, byteRecv);
 
-        //Tạo vòng đời cục bộ - bảo vệ các hàm bên trong tránh các luồng khác đụng vào
-        { //Mở phạm vi - vòng đời bắt đầu
-            lock_guard<mutex> lock(g_coutMutex);
-            cout << format("[{}] Command: {} | Argument: {}", clientIp, command, argument) << endl;
-        } //Đóng phạm vi - vòng đời kết thúc
+        //Tách từng lệnh phân cách bởi '\n' (hoặc '\r\n')
+        size_t pos = 0;
+        while ((pos = streamBuffer.find('\n')) != string::npos) {
+            string line = streamBuffer.substr(0, pos);
+            streamBuffer.erase(0, pos + 1);
 
-        //Thực thi lệnh và phản hồi
-        string reply = handler.handle(session, command, argument);
-        if (!reply.empty()) send(clientSocket, reply.c_str(), (int)reply.size(), 0);
+            //Phân tích lệnh
+            string command, argument;
+            parseCmd(line, command, argument);
+            if (command.empty()) continue;
 
-        //Cập nhật bảng session sau MỖI lệnh: user, trạng thái login, thư mục hiện tại, lệnh vừa chạy
-        SessionRegistry::update(clientSocket, session.getUserName(), session.getLoggedIn(), session.getDir(), command);
+            //Tạo vòng đời cục bộ - bảo vệ các hàm bên trong tránh các luồng khác đụng vào
+            { //Mở phạm vi - vòng đời bắt đầu
+                lock_guard<mutex> lock(g_coutMutex);
+                cout << format("[{}] Command: {} | Argument: {}", clientIp, command, argument) << endl;
+            } //Đóng phạm vi - vòng đời kết thúc
 
-        if (command == "QUIT") break;
+            //Thực thi lệnh và phản hồi
+            string reply = handler.handle(session, command, argument);
+            if (!reply.empty()) send(clientSocket, reply.c_str(), (int)reply.size(), 0);
+
+            //Cập nhật bảng session sau MỖI lệnh: user, trạng thái login, thư mục hiện tại, lệnh vừa chạy
+            SessionRegistry::update(clientSocket, session.getUserName(), session.getLoggedIn(), session.getDir(), command);
+
+            if (command == "QUIT") {
+                shouldQuit = true;
+                break;
+            }
+        }
     }
 
     //Gỡ session khỏi bảng + in lại bảng để log phản ánh đúng trạng thái mới nhất
@@ -103,7 +114,7 @@ bool ControlChannel::start() {
     }
 
     //Định danh địa chỉ Server-TCP
-    sockaddr_in serverAddrTcp;
+    sockaddr_in serverAddrTcp = {};
     serverAddrTcp.sin_family = AF_INET;
     serverAddrTcp.sin_addr.s_addr = INADDR_ANY;
     serverAddrTcp.sin_port = htons(this->tcpPort);
@@ -135,7 +146,7 @@ void ControlChannel::run() {
 
     while (true) {
         //Lấy thông tin Client-TCP được accept: các thông tin mạng + độ lớn vùng nhớ của Client-TCP 
-        sockaddr_in clientAddr;
+        sockaddr_in clientAddr = {};
         int clientAddrLen = sizeof(clientAddr);
 
         //Accept Client-TCP

@@ -26,7 +26,7 @@ constexpr int RDT_MAX_WINDOW = 32; //Cửa sổ tối đa (chặn trên để kh
 
 //Packet Loss Simulation
 constexpr bool SIMULATE_PACKET_LOSS = false; //true = bật giả lập mất gói để test
-constexpr int  LOSS_PERCENT = 10;    //Tỉ lệ mất gói (%) khi bật simulation
+constexpr int  LOSS_PERCENT         = 10;    //Tỉ lệ mất gói (%) khi bật simulation
 
 
 //Cấu trúc RdtPacket — chỉ dùng trong bộ nhớ, KHÔNG gửi trực tiếp

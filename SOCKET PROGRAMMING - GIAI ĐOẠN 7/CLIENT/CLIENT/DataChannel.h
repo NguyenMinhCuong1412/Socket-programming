@@ -8,7 +8,7 @@ private:
 	unsigned short udpPort;   //Port để phục vụ kênh dữ liệu
 	atomic<SOCKET> udpSocket; //Socket phục vụ kênh dữ liệu của Server-UDP, đảm bảo stop() có thể đóng socket an toàn
 
-	bool rdtSend(SOCKET s, const char* data, int len, const sockaddr_in& dest);
+	bool rdtSend(SOCKET s, const char* data, size_t len, const sockaddr_in& dest);
 	int rdtReceive(SOCKET s, std::vector<char>& outData, sockaddr_in& senderAddr);
 public:
 	DataChannel(unsigned short);

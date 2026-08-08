@@ -83,8 +83,11 @@ bool deserializePacket(const char* data, int length, RdtPacket& outPkt) {
     netSeq |= ((uint32_t)(uint8_t)data[3]);
     outPkt.seqNum = ntohl(netSeq);
 
-
     outPkt.flags = (uint8_t)data[4]; //Đọc flags (1 byte)
+    if (outPkt.flags != FLAG_DATA && outPkt.flags != FLAG_ACK && outPkt.flags != FLAG_FIN) {
+        cerr << format("[RDT] Invalid packet flags: {:#x}", outPkt.flags) << endl;
+        return false;
+    }
 
     //Đọc checksum (2 byte, network byte order)
     uint16_t netCksum = 0;

@@ -12,6 +12,7 @@ Session::Session() {
 	this->activePort = 0;  
 	this->passivePort = 0; 
 	this->activeDataChannel = nullptr;
+	this->isAborted = false;
 }
 
 Session::~Session() {
@@ -37,6 +38,13 @@ void Session::setPassiveMode(unsigned short port) {
 	this->passivePort = port;
 }
 
+void Session::resetDataMode() {
+	this->dataMode = DataMode::NONE;
+	this->activeIp = "";
+	this->activePort = 0;
+	this->passivePort = 0;
+}
+
 void Session::setActiveDataChannel(DataChannel* dc) {
 	lock_guard<mutex> lock(this->dcMutex);
 	this->activeDataChannel = dc;
@@ -44,9 +52,20 @@ void Session::setActiveDataChannel(DataChannel* dc) {
 
 bool Session::abortActiveTransfer() {
 	lock_guard<mutex> lock(this->dcMutex);
+	this->isAborted = true;
 	if (this->activeDataChannel != nullptr) {
 		this->activeDataChannel->stop(); //closesocket() -> recvfrom/sendto đang block ở thread phụ báo lỗi
 		return true;
 	}
 	return false;
+}
+
+bool Session::isTransferAborted() {
+	lock_guard<mutex> lock(this->dcMutex);
+	return this->isAborted;
+}
+
+void Session::setTransferAborted(bool ab) {
+	lock_guard<mutex> lock(this->dcMutex);
+	this->isAborted = ab;
 }

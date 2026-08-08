@@ -15,6 +15,7 @@ private:
 	string activeIp;                //ACTIVE: IP của Client gửi qua lệnh PORT
 	unsigned short activePort;      //ACTIVE: Port của Client gửi qua lệnh PORT
 	unsigned short passivePort;     //PASSIVE: Port của Server tự chọn
+	bool isAborted;                 // Báo hiệu chuyển giao bị hủy bỏ bởi ABOR
 	mutex dcMutex;                  //Mutex bảo vệ activeDataChannel, tránh crash giữa 2 luồng chính và phụ/crash giữa 2 luồng phụ cùng Session
 	DataChannel* activeDataChannel; //Con trỏ QUAN SÁT (không sở hữu) tới DataChannel đang chạy của Client, chỉ dùng để ABOR gọi stop(); vòng đời thật thuộc shared_ptr bên CommandHandler
 public:
@@ -40,6 +41,9 @@ public:
 	void setRenameFrom(string);
 	void setActiveMode(const string&, unsigned short);
 	void setPassiveMode(unsigned short);
+	void resetDataMode();
 	void setActiveDataChannel(DataChannel*);
 	bool abortActiveTransfer();
+	bool isTransferAborted();
+	void setTransferAborted(bool);
 };
