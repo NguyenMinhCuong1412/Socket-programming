@@ -36,7 +36,7 @@ private:
     string handleRmd(Session&, const string&);  //Remove Directory - Xóa thư mục trống 
     string handleList(Session&, const string&); //Liệt kê chi tiết tệp/thư mục ở [path] (rỗng = thư mục hiện tại)
     string handleNlst(Session&, const string&); //Liệt kê tên tệp/thư mục ở [path] (rỗng = thư mục hiện tại)
-    string handleStou(Session&);                //Store Unique = STOR + Server tự đặt 1 tên độc nhất 
+    string handleStou(Session&, const string&); //Store Unique = STOR + Server tự đặt 1 tên độc nhất 
     string handleAppe(Session&, const string&); //Append - Tải lên và gắn nối vào cuối 1 tệp đã tồn tại
     string handleDele(Session&, const string&); //Delete - Xóa 1 tệp 
     string handleRnfr(Session&, const string&); //Rename From - Chỉ định tệp cần đổi tên
