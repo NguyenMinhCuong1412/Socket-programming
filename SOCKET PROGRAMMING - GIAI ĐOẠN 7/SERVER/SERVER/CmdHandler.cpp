@@ -155,7 +155,7 @@ string CommandHandler::handleQuit() {
 
 string CommandHandler::handleHelp(const string& arg) {
     if (arg.empty()) { //Hiển thị toàn bộ lệnh hỗ trợ
-        string response = "214 The following commands are recognized:\r\n";
+        string response = "214- The following commands are recognized:\r\n";
         response += "    USER    PASS    PWD     NOOP    QUIT    HELP\n";
         response += "    TYPE    MODE    SIZE    STAT    MDTM    STOR\n";
         response += "    RETR    CWD     CDUP    MKD     RMD     LIST\n";
@@ -254,7 +254,7 @@ string CommandHandler::handleMdtm(Session& s, const string& arg) {
 string CommandHandler::handleStat(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
     if (arg.empty()) { //Trạng thái chung 
-        return "211 FTP server status:\r\n"
+        return "211- FTP server status:\r\n"
             " User: " + s.getUserName() + "\r\n"
             " Current working directory: " + s.getDir() + "\r\n"
             " Data type: " + s.getType() + "\r\n"
@@ -266,9 +266,19 @@ string CommandHandler::handleStat(Session& s, const string& arg) {
         fs::path filePath = resolvePath(s, arg, logical);
         if (filePath.empty() || !fs::exists(filePath))
             return format("550 File unavailable, {} not found\r\n", arg);
-        if (fs::is_directory(filePath))
-            return format("211 '{}' is a directory\r\n", logical);
-        else return format("211 Size of {}: {}\r\n", logical, fs::file_size(filePath));
+        
+        string name = filePath.filename().string();
+        
+        auto ftime = fs::last_write_time(filePath);
+        auto sctp = chr::clock_cast<chr::system_clock>(ftime);
+        auto tt = chr::system_clock::to_time_t(sctp);
+        tm time; localtime_s(&time, &tt);
+        string date = format("{:04}{:02}{:02}{:02}{:02}{:02}", time.tm_year + 1900, time.tm_mon + 1, time.tm_mday, time.tm_hour, time.tm_min, time.tm_sec);
+        
+        string typeStr = fs::is_directory(filePath) ? "DIR" : "FILE";
+        string sizeStr = fs::is_directory(filePath) ? "0" : std::to_string(fs::file_size(filePath));
+        
+        return format("211 {} {} {} {}\r\n", name, date, typeStr, sizeStr);
     }
 }
 
@@ -322,13 +332,15 @@ string CommandHandler::handleRetr(Session& s, const string& arg) {
     if (target.empty() || !fs::exists(target) || !fs::is_regular_file(target))
         return format("550 File unavailable, {} not found\r\n", arg);
 
+    uintmax_t size = fs::file_size(target);
+
     joinPreviousTransfer();
 
     //Khởi tạo kênh dữ liệu - UDP (Server gửi - Client nhận)
     auto dc = make_shared<DataChannel>(pickListenPort(s));
     if (!dc->start()) return "425 Can't open data connection\r\n";
 
-    sendIntermediate("150 File status okay, opening data connection\r\n"); 
+    sendIntermediate(appendPortIfNeeded(s, dc->getBoundPort(), format("150 File status okay, opening data connection ({} bytes)\r\n", size))); 
     s.setActiveDataChannel(dc.get());
 
     string destIp = (mode == DataMode::ACTIVE) ? s.getActiveIp() : clientIp;
@@ -404,6 +416,9 @@ string CommandHandler::handleRmd(Session& s, const string& arg) {
 string CommandHandler::handleNlst(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
 
+    DataMode mode = s.getDataMode();
+    if (mode == DataMode::NONE) return "425 Can't open data connection\r\n";
+
     //arg rỗng -> resolvePath tự map về s.getDir() (thư mục hiện tại); arg có giá trị -> map về đúng [path] được chỉ định
     string logical;
     fs::path physical = resolvePath(s, arg, logical);
@@ -413,11 +428,60 @@ string CommandHandler::handleNlst(Session& s, const string& arg) {
     string body;
     for (auto& entry : fs::directory_iterator(physical))   //directory_iterator: duyệt danh sách tệp/thư mục con nằm trong 
         body += entry.path().filename().string() + "\r\n"; //entry.path(): trả về đường dẫn của từng file/thư mục con bên trong 
-    return format("150 Here comes the directory listing\r\n{}226 Transfer complete\r\n", body);
+
+    auto ms = chr::duration_cast<chr::milliseconds>(chr::system_clock::now().time_since_epoch()).count();
+    string tempFileName = format(".temp_nlst_{}.tmp", ms);
+    fs::path tempFile = SERVER_ROOT / tempFileName;
+    int counter = 0;
+    while (fs::exists(tempFile)) {
+        counter++;
+        tempFile = SERVER_ROOT / format(".temp_nlst_{}_{}.tmp", ms, counter);
+    }
+
+    ofstream ofs(tempFile);
+    ofs << body;
+    ofs.close();
+
+    joinPreviousTransfer();
+
+    auto dc = make_shared<DataChannel>(pickListenPort(s));
+    if (!dc->start()) return "425 Can't open data connection\r\n";
+
+    sendIntermediate(appendPortIfNeeded(s, dc->getBoundPort(), "150 Here comes the directory listing\r\n"));
+    s.setActiveDataChannel(dc.get());
+
+    string destIp = (mode == DataMode::ACTIVE) ? s.getActiveIp() : clientIp;
+    unsigned short destPort = s.getActivePort();
+    bool isAscii = (s.getType() == "A");
+
+    transferThread = thread([this, &s, dc, tempFile, mode, destIp, destPort, isAscii]() {
+        bool ok = (mode == DataMode::PASSIVE)
+            ? dc->sendFileAfterHandshake(tempFile.string(), isAscii)
+            : dc->sendFile(tempFile.string(), destIp, destPort, isAscii);
+            
+        s.setActiveDataChannel(nullptr);
+        dc->stop();
+        
+        error_code ec;
+        fs::remove(tempFile, ec);
+        
+        if (s.isTransferAborted()) {
+            this->sendIntermediate("426 Connection closed, transfer aborted\r\n");
+            s.setTransferAborted(false);
+        } else {
+            this->sendIntermediate(ok ? "226 Transfer complete\r\n" : "426 Connection closed, transfer aborted\r\n");
+        }
+        s.resetDataMode();
+    });
+
+    return "";
 }
 
 string CommandHandler::handleList(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
+
+    DataMode mode = s.getDataMode();
+    if (mode == DataMode::NONE) return "425 Can't open data connection\r\n";
 
     //arg rỗng -> resolvePath tự map về s.getDir() (thư mục hiện tại); arg có giá trị -> map về đúng [path] được chỉ định
     string logical;
@@ -429,28 +493,89 @@ string CommandHandler::handleList(Session& s, const string& arg) {
     for (auto& entry : fs::directory_iterator(physical)) {
         bool isDir = entry.is_directory();              //Kiểm tra thư mục hay tệp tin
         uintmax_t size = isDir ? 0 : entry.file_size(); //uintmax_t: unsigned integer có kích thước lớn nhất hệ thống C++ hỗ trợ
-        body += format("{}\t{}\t{}\r\n", isDir ? "<DIR>" : "FILE", size, entry.path().filename().string());
+        
+        auto ftime = fs::last_write_time(entry);
+        auto sctp = chr::clock_cast<chr::system_clock>(ftime);
+        auto tt = chr::system_clock::to_time_t(sctp);
+        tm timeInfo; 
+        localtime_s(&timeInfo, &tt);
+        
+        string dateStr = format("{:04}{:02}{:02}{:02}{:02}{:02}", 
+            timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday,
+            timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
+            
+        body += format("{} {} {} {}\r\n", entry.path().filename().string(), dateStr, isDir ? "DIR" : "FILE", size);
     }
-    return format("150 Here comes the directory listing\r\n{}226 Transfer complete\r\n", body);
+    
+    auto ms = chr::duration_cast<chr::milliseconds>(chr::system_clock::now().time_since_epoch()).count();
+    string tempFileName = format(".temp_list_{}.tmp", ms);
+    fs::path tempFile = SERVER_ROOT / tempFileName;
+    int counter = 0;
+    while (fs::exists(tempFile)) {
+        counter++;
+        tempFile = SERVER_ROOT / format(".temp_list_{}_{}.tmp", ms, counter);
+    }
+    
+    ofstream ofs(tempFile);
+    ofs << body;
+    ofs.close();
+
+    joinPreviousTransfer();
+    
+    auto dc = make_shared<DataChannel>(pickListenPort(s));
+    if (!dc->start()) return "425 Can't open data connection\r\n";
+
+    sendIntermediate(appendPortIfNeeded(s, dc->getBoundPort(), "150 Here comes the directory listing\r\n"));
+    s.setActiveDataChannel(dc.get());
+    
+    string destIp = (mode == DataMode::ACTIVE) ? s.getActiveIp() : clientIp;
+    unsigned short destPort = s.getActivePort();
+    bool isAscii = (s.getType() == "A");
+
+    transferThread = thread([this, &s, dc, tempFile, mode, destIp, destPort, isAscii]() {
+        bool ok = (mode == DataMode::PASSIVE)
+            ? dc->sendFileAfterHandshake(tempFile.string(), isAscii)
+            : dc->sendFile(tempFile.string(), destIp, destPort, isAscii);
+            
+        s.setActiveDataChannel(nullptr);
+        dc->stop();
+        
+        error_code ec;
+        fs::remove(tempFile, ec);
+        
+        if (s.isTransferAborted()) {
+            this->sendIntermediate("426 Connection closed, transfer aborted\r\n");
+            s.setTransferAborted(false);
+        } else {
+            this->sendIntermediate(ok ? "226 Transfer complete\r\n" : "426 Connection closed, transfer aborted\r\n");
+        }
+        s.resetDataMode();
+    });
+    
+    return "";
 }
 
-string CommandHandler::handleStou(Session& s) {
+string CommandHandler::handleStou(Session& s, const string& arg) {
     if (!s.getLoggedIn()) return "530 Not logged in\r\n";
+    if (arg.empty()) return "501 Syntax error in parameters\r\n";
 
     DataMode mode = s.getDataMode();
     if (mode == DataMode::NONE) return "425 Can't open data connection: send PORT or PASV before STOU\r\n";
 
+    fs::path originalPath(arg);
+    string baseName = originalPath.stem().string(); // Tên file không có đuôi
+    if (baseName.empty()) baseName = "file";
 
     //Server tự đặt tên file - KHÔNG dùng tên do Client gửi
     auto ms = chr::duration_cast<chr::milliseconds>(chr::system_clock::now().time_since_epoch()).count();
-    string autoName = format("file_{}.dat", ms);
+    string autoName = format("{}_{}.tmp", baseName, ms);
 
     string logical;
     fs::path target = resolvePath(s, autoName, logical);
     int counter = 0;
     while (!target.empty() && fs::exists(target)) {
         counter++;
-        autoName = format("file_{}_{}.dat", ms, counter);
+        autoName = format("{}_{}_{}.tmp", baseName, ms, counter);
         target = resolvePath(s, autoName, logical);
     }
     if (target.empty()) return "550 Invalid path\r\n";
@@ -675,7 +800,7 @@ string CommandHandler::handle(Session& s, const string& com, const string& arg) 
     case FtpCommand::RMD:  return handleRmd(s, arg);
     case FtpCommand::LIST: return handleList(s, arg);
     case FtpCommand::NLST: return handleNlst(s, arg);
-    case FtpCommand::STOU: return handleStou(s);
+    case FtpCommand::STOU: return handleStou(s, arg);
     case FtpCommand::APPE: return handleAppe(s, arg);
     case FtpCommand::DELE: return handleDele(s, arg);
     case FtpCommand::RNFR: return handleRnfr(s, arg);

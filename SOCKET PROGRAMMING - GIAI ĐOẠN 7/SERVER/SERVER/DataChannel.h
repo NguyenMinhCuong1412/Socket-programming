@@ -9,6 +9,7 @@ private:
 	atomic<SOCKET> udpSocket; //Socket phục vụ kênh dữ liệu của Server-UDP, đảm bảo stop() có thể đóng socket an toàn
 
 	bool rdtSend(SOCKET s, const char* data, size_t len, const sockaddr_in& dest);
+	bool rdtSend(SOCKET s, std::ifstream& in, uintmax_t len, const sockaddr_in& dest);
 	int rdtReceive(SOCKET s, vector<char>& outData, sockaddr_in& senderAddr);
 public:
 	DataChannel(unsigned short);

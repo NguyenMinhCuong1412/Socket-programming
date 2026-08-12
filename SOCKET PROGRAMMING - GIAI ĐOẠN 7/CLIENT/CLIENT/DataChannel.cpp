@@ -1,5 +1,24 @@
 #include "DataChannel.h"
 
+void updateProgressTitle(const string& action, uintmax_t current, uintmax_t total) {
+    if (total <= 0) return;
+    int percent = (int)((current * 100) / total);
+    percent = max(0, min(100, percent));
+    
+    int filled = percent / 10;
+    string bar = string(filled, '#') + string(10 - filled, '-');
+    string text = format("[{}] [{}] {}% ({}/{} bytes)", action, bar, percent, current, total);
+    
+    HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    if (GetConsoleScreenBufferInfo(h, &csbi)) {
+        COORD oldPos = csbi.dwCursorPosition;
+        SetConsoleCursorPosition(h, { 0, 0 });
+        cout << text << string(max(0, 80 - (int)text.length()), ' '); 
+        SetConsoleCursorPosition(h, oldPos);
+    }
+}
+
 DataChannel::DataChannel(unsigned short port) {
 	this->udpPort = port;
 	this->udpSocket.store(INVALID_SOCKET);
@@ -42,7 +61,7 @@ bool DataChannel::start() {
 	return true;
 }
 
-bool DataChannel::rdtSend(SOCKET s, const char* data, size_t len, const sockaddr_in& dest) {
+bool DataChannel::rdtSend(SOCKET s, const char* data, size_t len, const sockaddr_in& dest, uintmax_t totalSize) {
 	uint32_t totalChunks = (len == 0) ? 0 : (uint32_t)((len + RDT_MAX_PAYLOAD - 1) / RDT_MAX_PAYLOAD);
 	vector<vector<char>> serializedPkts(totalChunks);
 	for (uint32_t i = 0; i < totalChunks; i++) {
@@ -79,10 +98,10 @@ bool DataChannel::rdtSend(SOCKET s, const char* data, size_t len, const sockaddr
 					(const sockaddr*)&dest, sizeof(dest));
 				if (sent == SOCKET_ERROR) {
 					int err = WSAGetLastError();
-					if (err != WSAECONNRESET) {
+					if (err != WSAECONNRESET && err != WSAENOTSOCK && err != WSAEINTR) {
 						cerr << "[RDT] sendto failed with error: " << err << endl;
-						return false;
 					}
+					return false;
 				}
 			}
 			else cout << "[RDT-SIM] Dropped outgoing DATA packet seq=" << nextSeq << endl;
@@ -155,10 +174,10 @@ bool DataChannel::rdtSend(SOCKET s, const char* data, size_t len, const sockaddr
 						int sent = sendto(s, serializedPkts[i].data(), (int)serializedPkts[i].size(), 0, (const sockaddr*)&dest, sizeof(dest));
 						if (sent == SOCKET_ERROR) {
 							int err = WSAGetLastError();
-							if (err != WSAECONNRESET) {
+							if (err != WSAECONNRESET && err != WSAENOTSOCK && err != WSAEINTR) {
 								cerr << "[RDT] GBN sendto failed: " << err << endl;
-								return false;
 							}
+							return false;
 						}
 					}
 				}
@@ -168,9 +187,11 @@ bool DataChannel::rdtSend(SOCKET s, const char* data, size_t len, const sockaddr
 		}
 
 		auto now = chr::steady_clock::now();
-		if (chr::duration_cast<chr::milliseconds>(now - lastPrintTime).count() >= 1000) {
-			double percent = (totalChunks == 0) ? 100.0 : (base * 100.0 / totalChunks);
-			cout << format("\n[Transfer Status] Uploaded {:.1f}% ({}/{} chunks) ...", percent, base, totalChunks) << endl;
+		if (chr::duration_cast<chr::milliseconds>(now - lastPrintTime).count() >= 500) {
+            if (len > 0) {
+                uintmax_t transferred = min((uintmax_t)(base * RDT_MAX_PAYLOAD), (uintmax_t)len);
+                updateProgressTitle("Uploading", transferred, len);
+            }
 			lastPrintTime = now;
 		}
 	}
@@ -235,10 +256,201 @@ bool DataChannel::rdtSend(SOCKET s, const char* data, size_t len, const sockaddr
 		}
 	}
 
+	if (len > 0) updateProgressTitle("Uploading", len, len);
 	return true;
 }
 
-int DataChannel::rdtReceive(SOCKET s, std::vector<char>& outData, sockaddr_in& senderAddr) {
+bool DataChannel::rdtSend(SOCKET s, std::ifstream& in, uintmax_t len, const sockaddr_in& dest, uintmax_t totalSize) {
+	uint32_t totalChunks = (len == 0) ? 0 : (uint32_t)((len + RDT_MAX_PAYLOAD - 1) / RDT_MAX_PAYLOAD);
+
+	auto getSerializedPacket = [&](uint32_t seq) -> vector<char> {
+		size_t offset = (size_t)seq * RDT_MAX_PAYLOAD;
+		size_t chunkSize = min((size_t)RDT_MAX_PAYLOAD, (size_t)(len - offset));
+
+		RdtPacket pkt;
+		pkt.seqNum = seq;
+		pkt.flags = FLAG_DATA;
+		pkt.checksum = 0;
+		pkt.payloadLength = (uint16_t)chunkSize;
+		pkt.payload.resize(chunkSize);
+
+		in.clear();
+		in.seekg(offset, ios::beg);
+		in.read(pkt.payload.data(), chunkSize);
+
+		return serializePacket(pkt);
+	};
+
+	int pollTimeout = RDT_POLL_MS;
+	setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&pollTimeout, sizeof(pollTimeout));
+
+	uint32_t base = 0;                 
+	uint32_t nextSeq = 0;              
+	int window = RDT_INITIAL_WINDOW;   
+	int retryRounds = 0;               
+	bool timerRunning = false;
+	chr::steady_clock::time_point timerStart;
+	auto lastPrintTime = chr::steady_clock::now();
+
+	while (base < totalChunks) {
+		while (nextSeq < totalChunks && nextSeq < base + (uint32_t)window) {
+			if (!shouldSimulateLoss()) {
+				vector<char> serializedPkt = getSerializedPacket(nextSeq);
+				int sent = sendto(s, serializedPkt.data(), (int)serializedPkt.size(), 0,
+					(const sockaddr*)&dest, sizeof(dest));
+				if (sent == SOCKET_ERROR) {
+					int err = WSAGetLastError();
+					if (err != WSAECONNRESET && err != WSAENOTSOCK && err != WSAEINTR) {
+						cerr << "[RDT] sendto failed with error: " << err << endl;
+					}
+					return false;
+				}
+			}
+			else cout << "[RDT-SIM] Dropped outgoing DATA packet seq=" << nextSeq << endl;
+			nextSeq++;
+		}
+
+		if (!timerRunning && base < nextSeq) {
+			timerStart = chr::steady_clock::now();
+			timerRunning = true;
+		}
+
+		char ackBuf[RDT_HEADER_SIZE + 64];
+		sockaddr_in ackFrom = {};
+		int ackFromLen = sizeof(ackFrom);
+		int ackLen = recvfrom(s, ackBuf, sizeof(ackBuf), 0, (sockaddr*)&ackFrom, &ackFromLen);
+
+		if (ackLen == SOCKET_ERROR) {
+			int err = WSAGetLastError();
+			if (err == WSAECONNRESET) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(50));
+				continue; 
+			}
+			if (err != WSAETIMEDOUT) return false; 
+		}
+		else if (shouldSimulateLoss()) cout << "[RDT-SIM] Dropped incoming ACK" << endl;
+		
+		else {
+			if (ackFrom.sin_addr.s_addr != dest.sin_addr.s_addr ||
+				ackFrom.sin_port != dest.sin_port) {
+				continue;
+			}
+
+			RdtPacket ackPkt;
+			if (deserializePacket(ackBuf, ackLen, ackPkt) && (ackPkt.flags & FLAG_ACK)) {
+				if (ackPkt.seqNum != 0xFFFFFFFFu && ackPkt.seqNum + 1 > base) {
+					base = ackPkt.seqNum + 1;                        
+					window = min(window + 1, RDT_MAX_WINDOW);        
+					retryRounds = 0;                                 
+					timerRunning = false;                            
+				}
+			}
+		}
+
+		if (timerRunning) {
+			auto elapsedMs = chr::duration_cast<chr::milliseconds>(chr::steady_clock::now() - timerStart).count();
+			if (elapsedMs >= RDT_TIMEOUT_MS) {
+				retryRounds++;
+				if (retryRounds > RDT_MAX_RETRIES) {
+					cerr << format("[RDT] Max Go-Back-N retries reached at base={}, transfer failed", base) << endl;
+					SetConsoleTitleA("FTP Client");
+					return false;
+				}
+				window = max(window / 2, RDT_MIN_WINDOW); 
+				cout << "[RDT] Timeout on base seq=" << base << ", Go-Back-N retransmit ["
+					<< base << ".." << (nextSeq - 1) << "], new window=" << window
+					<< " (" << retryRounds << "/" << RDT_MAX_RETRIES << ")" << endl;
+
+				for (uint32_t i = base; i < nextSeq; i++) {
+					if (!shouldSimulateLoss()) {
+						vector<char> serializedPkt = getSerializedPacket(i);
+						int sent = sendto(s, serializedPkt.data(), (int)serializedPkt.size(), 0, (const sockaddr*)&dest, sizeof(dest));
+						if (sent == SOCKET_ERROR) {
+							int err = WSAGetLastError();
+							if (err != WSAECONNRESET && err != WSAENOTSOCK && err != WSAEINTR) {
+								cerr << "[RDT] GBN sendto failed: " << err << endl;
+							}
+							return false;
+						}
+					}
+				}
+				timerStart = chr::steady_clock::now();
+				timerRunning = true;
+			}
+		}
+
+		auto now = chr::steady_clock::now();
+		if (chr::duration_cast<chr::milliseconds>(now - lastPrintTime).count() >= 500) {
+			if (totalSize > 0) {
+				uintmax_t transferred = min((uintmax_t)(base * RDT_MAX_PAYLOAD), (uintmax_t)totalSize);
+				updateProgressTitle("Uploading", transferred, totalSize);
+			}
+			lastPrintTime = now;
+		}
+	}
+
+	{
+		RdtPacket finPkt;
+		finPkt.seqNum = totalChunks; 
+		finPkt.flags = FLAG_FIN;
+		finPkt.checksum = 0;
+		finPkt.payloadLength = 0;
+		vector<char> rawFin = serializePacket(finPkt);
+
+		int timeout = RDT_TIMEOUT_MS;
+		setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+
+		bool finAcked = false;
+		for (int retry = 0; retry < RDT_MAX_RETRIES; retry++) {
+			if (!shouldSimulateLoss()) {
+				int sent = sendto(s, rawFin.data(), (int)rawFin.size(), 0, (const sockaddr*)&dest, sizeof(dest));
+				if (sent == SOCKET_ERROR) {
+					int err = WSAGetLastError();
+					if (err != WSAECONNRESET) return false;
+				}
+			}
+			else cout << "[RDT-SIM] Dropped outgoing FIN packet seq=" << totalChunks << endl;
+
+			char ackBuf[RDT_HEADER_SIZE + 64];
+			sockaddr_in ackFrom = {};
+			int ackFromLen = sizeof(ackFrom);
+			int ackLen = recvfrom(s, ackBuf, sizeof(ackBuf), 0, (sockaddr*)&ackFrom, &ackFromLen);
+
+			if (ackLen == SOCKET_ERROR) {
+				int err = WSAGetLastError();
+				if (err == WSAECONNRESET) {
+					std::this_thread::sleep_for(std::chrono::milliseconds(50));
+					continue; 
+				}
+				if (err == WSAETIMEDOUT) {
+					cout << "[RDT] Timeout waiting for FIN-ACK, retransmit (" << (retry + 1) << "/" << RDT_MAX_RETRIES << ")" << endl;
+					continue;
+				}
+				return false;
+			}
+			if (shouldSimulateLoss()) { cout << "[RDT-SIM] Dropped incoming FIN-ACK" << endl; continue; }
+
+			if (ackFrom.sin_addr.s_addr != dest.sin_addr.s_addr ||
+				ackFrom.sin_port != dest.sin_port) {
+				continue;
+			}
+
+			RdtPacket ackPkt;
+			if (!deserializePacket(ackBuf, ackLen, ackPkt)) continue;
+			if ((ackPkt.flags & FLAG_ACK) && ackPkt.seqNum == totalChunks) { finAcked = true; break; }
+		}
+
+		if (!finAcked) {
+			cerr << "[RDT] Max retries reached for FIN, transfer failed" << endl;
+			return false;
+		}
+	}
+
+	if (totalSize > 0) updateProgressTitle("Uploading", totalSize, totalSize);
+	return true;
+}
+
+int DataChannel::rdtReceive(SOCKET s, std::vector<char>& outData, sockaddr_in& senderAddr, uintmax_t totalSize) {
 	uint32_t expectedSeq = 0;
 	outData.clear();
 
@@ -349,16 +561,19 @@ int DataChannel::rdtReceive(SOCKET s, std::vector<char>& outData, sockaddr_in& s
 		}
 
 		auto now = chr::steady_clock::now();
-		if (chr::duration_cast<chr::milliseconds>(now - lastPrintTime).count() >= 1000) {
-			cout << format("\n[Transfer Status] Downloaded {} bytes ...", outData.size()) << endl;
+		if (chr::duration_cast<chr::milliseconds>(now - lastPrintTime).count() >= 500) {
+            if (totalSize > 0) {
+                updateProgressTitle("Downloading", outData.size(), totalSize);
+            }
 			lastPrintTime = now;
 		}
 	}
 
+	if (totalSize > 0) updateProgressTitle("Downloading", totalSize, totalSize);
 	return (int)outData.size();
 }
 
-bool DataChannel::receiveFile(const string& filepath, bool append, bool isAscii) {
+bool DataChannel::receiveFile(const string& filepath, uintmax_t totalSize, bool append, bool isAscii) {
 	//Mở file để ghi dữ liệu nhận được từ Client
 	ios::openmode mode = (append ? ios::app : ios::trunc);
 	if (!isAscii) mode |= ios::binary;
@@ -374,7 +589,7 @@ bool DataChannel::receiveFile(const string& filepath, bool append, bool isAscii)
 	// Nhận toàn bộ dữ liệu qua RDT
 	vector<char> fileData;
 	sockaddr_in senderAddr = {};
-	int totalRecv = rdtReceive(s, fileData, senderAddr);
+	int totalRecv = rdtReceive(s, fileData, senderAddr, totalSize);
 
 	if (totalRecv < 0) {
 		cerr << "426 Connection closed, transfer aborted" << endl;
@@ -389,7 +604,7 @@ bool DataChannel::receiveFile(const string& filepath, bool append, bool isAscii)
 	return true;
 }
 
-bool DataChannel::sendFile(const string& filepath, const string& destIp, unsigned short destPort, bool isAscii) {
+bool DataChannel::sendFile(const string& filepath, const string& destIp, unsigned short destPort, uintmax_t totalSize, bool isAscii) {
 	//Mở file để đọc dữ liệu gửi tới Client
 	ios::openmode mode = ios::in;
 	if (!isAscii) mode |= ios::binary;
@@ -405,18 +620,19 @@ bool DataChannel::sendFile(const string& filepath, const string& destIp, unsigne
 	destAddr.sin_port = htons(destPort);
 	inet_pton(AF_INET, destIp.c_str(), &destAddr.sin_addr);
 
-	//Đọc toàn bộ file vào buffer
-	vector<char> fileData((istreambuf_iterator<char>(in)), istreambuf_iterator<char>());
-	in.close();
+	in.seekg(0, ios::end);
+	uintmax_t actualSize = in.tellg();
+	in.seekg(0, ios::beg);
 
 	SOCKET s = udpSocket.load();
 	if (s == INVALID_SOCKET) return false;
 
-	//Gửi toàn bộ file qua RDT
-	return rdtSend(s, fileData.data(), fileData.size(), destAddr);
+	//Gửi toàn bộ file qua RDT (streaming trực tiếp từ đĩa)
+	//Dùng totalSize nếu có, ngược lại dùng actualSize (VD truyền raw file)
+	return rdtSend(s, in, actualSize, destAddr, totalSize > 0 ? totalSize : actualSize);
 }
 
-bool DataChannel::sendFileAfterHandshake(const string& filepath, bool isAscii) {
+bool DataChannel::sendFileAfterHandshake(const string& filepath, uintmax_t totalSize, bool isAscii) {
 	SOCKET s = udpSocket.load();
 	if (s == INVALID_SOCKET) return false;
 
@@ -435,7 +651,7 @@ bool DataChannel::sendFileAfterHandshake(const string& filepath, bool isAscii) {
 	inet_ntop(AF_INET, &clientAddr.sin_addr, ipStr, INET_ADDRSTRLEN);
 	unsigned short learnedPort = ntohs(clientAddr.sin_port);
 
-	return sendFile(filepath, ipStr, learnedPort, isAscii);
+	return sendFile(filepath, ipStr, learnedPort, totalSize, isAscii);
 }
 
 bool DataChannel::sendProbe(const string& destIp, unsigned short destPort) {

@@ -102,92 +102,74 @@ fs::path ControlChannel::resolvePath(const string& arg) {
     return fs::weakly_canonical(CLIENT_ROOT / relativePart);
 }
 
-bool ControlChannel::autoNegotiateActivePort() {
-    //Tự động làm những gì user sẽ phải gõ tay bằng lệnh "PORT h1,h2,h3,h4,p1,p2", dùng 1 cổng NGẪU NHIÊN do OS cấp
-    SOCKET tmp = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (tmp == INVALID_SOCKET) return false;
 
-    sockaddr_in tmpAddr{};
-    tmpAddr.sin_family = AF_INET;
-    tmpAddr.sin_addr.s_addr = INADDR_ANY;
-    tmpAddr.sin_port = 0; //0 = để OS tự chọn cổng còn trống
-    if (bind(tmp, (sockaddr*)&tmpAddr, sizeof(tmpAddr)) == SOCKET_ERROR) {
-        closesocket(tmp);
-        return false;
-    }
-
-    sockaddr_in boundAddr{};
-    int boundLen = sizeof(boundAddr);
-    if (getsockname(tmp, (sockaddr*)&boundAddr, &boundLen) == SOCKET_ERROR) {
-        closesocket(tmp);
-        return false;
-    }
-    unsigned short ephemeralPort = ntohs(boundAddr.sin_port);
-    closesocket(tmp);
-
-    sockaddr_in localAddr{};
-    int localLen = sizeof(localAddr);
-    if (getsockname(tcpSocket, (sockaddr*)&localAddr, &localLen) == SOCKET_ERROR) return false;
-
-    char ipStr[INET_ADDRSTRLEN];
-    if (!inet_ntop(AF_INET, &localAddr.sin_addr, ipStr, INET_ADDRSTRLEN)) return false;
-
-    vector<int> ipParts;
-    stringstream ipss(ipStr);
-    string seg;
-    while (getline(ipss, seg, '.')) {
-        try { ipParts.push_back(stoi(seg)); }
-        catch (...) { return false; }
-    }
-    if (ipParts.size() != 4) return false;
-
-    string portCmd = format("PORT {},{},{},{},{},{}",
-        ipParts[0], ipParts[1], ipParts[2], ipParts[3],
-        ephemeralPort / 256, ephemeralPort % 256);
-
-    myActivePort = ephemeralPort;
-    dataMode = DataMode::ACTIVE;
-
-    send(tcpSocket, portCmd.c_str(), (int)portCmd.size(), 0);
-    return true;
-}
-
-void ControlChannel::doDataTransfer(const string& cmdWord, const string& filename) {
+void ControlChannel::doDataTransfer(const string& cmdWord, const string& filename, uintmax_t totalSize) {
     //Resolve đường dẫn file qua client_root — bảo vệ mã nguồn gốc
     string localPath = resolvePath(filename).string();
 
     if (cmdWord == "STOR" || cmdWord == "STOU" || cmdWord == "APPE") {
-        if (!fs::exists(localPath) || !fs::is_regular_file(localPath)) {
-            cerr << "550 File unavailable, local file not found: " << filename << endl;
-            dataMode = DataMode::NONE;
-            return;
-        }
+        totalSize = fs::file_size(localPath);
         unsigned short destPort = (dataMode.load() == DataMode::PASSIVE) ? serverPasvPort.load() : serverUploadPort.load();
         DataChannel dc(0); //port cục bộ ephemeral
+        activeDataChannel.store(&dc);
         if (dc.start()) {
-            dc.sendFile(localPath, serverIp, destPort, isAsciiMode.load());
+            dc.sendFile(localPath, serverIp, destPort, totalSize, isAsciiMode.load());
             dc.stop();
         }
+        activeDataChannel.store(nullptr);
     }
-    else if (cmdWord == "RETR") {
+    else if (cmdWord == "RETR" || cmdWord == "LIST" || cmdWord == "NLST") {
         DataMode mode = dataMode.load();
+        
+        bool isList = (cmdWord == "LIST" || cmdWord == "NLST");
+        string targetFile = localPath;
+        if (isList) {
+            auto ms = chr::duration_cast<chr::milliseconds>(chr::system_clock::now().time_since_epoch()).count();
+            string tempFileName = format(".tmp_list_{}.tmp", ms);
+            targetFile = (CLIENT_ROOT / tempFileName).string();
+            int counter = 0;
+            while (fs::exists(targetFile)) {
+                counter++;
+                targetFile = (CLIENT_ROOT / format(".tmp_list_{}_{}.tmp", ms, counter)).string();
+            }
+        }
+
         if (mode == DataMode::PASSIVE) {
             DataChannel dc(0);
+            activeDataChannel.store(&dc);
             if (dc.start()) {
                 dc.sendProbe(serverIp, serverPasvPort.load());
-                dc.receiveFile(localPath, false, isAsciiMode.load());
+                dc.receiveFile(targetFile, totalSize, false, isAsciiMode.load());
                 dc.stop();
             }
+            activeDataChannel.store(nullptr);
         }
         else if (mode == DataMode::ACTIVE) {
             DataChannel dc(myActivePort.load());
+            activeDataChannel.store(&dc);
             if (dc.start()) {
-                dc.receiveFile(localPath, false, isAsciiMode.load());
+                dc.receiveFile(targetFile, totalSize, false, isAsciiMode.load());
                 dc.stop();
             }
+            activeDataChannel.store(nullptr);
         }
         else {
-            cerr << "425 Can't open data connection: no PORT/PASV negotiated for this RETR" << endl;
+            cerr << "425 Can't open data connection: no PORT/PASV negotiated" << endl;
+        }
+
+        if (isList) {
+            if (fs::exists(targetFile)) {
+                ifstream ifs(targetFile);
+                if (ifs) {
+                    string line;
+                    while (getline(ifs, line)) {
+                        cout << "      " << line << "\n";
+                    }
+                    ifs.close();
+                }
+                error_code ec;
+                fs::remove(targetFile, ec);
+            }
         }
     }
     dataMode = DataMode::NONE;
@@ -227,11 +209,37 @@ void ControlChannel::receiverLoop() {
 
             if (reply.empty()) continue;
 
-            cout << "\nServer: " << reply << endl;
-
             string code = (reply.size() >= 3) ? reply.substr(0, 3) : "";
-            bool isStatusCode = (reply.size() >= 3 && isdigit((unsigned char)reply[0]) &&
+            bool isAnyStatusCode = (reply.size() >= 3 && isdigit((unsigned char)reply[0]) &&
                                  isdigit((unsigned char)reply[1]) && isdigit((unsigned char)reply[2]));
+            bool isFinalStatusCode = isAnyStatusCode && (reply.size() == 3 || reply[3] == ' ');
+
+            if (isAnyStatusCode) {
+                //If there's a hyphen (multi-line start), we can optionally replace it with space for cleaner UI
+                string displayReply = reply;
+                if (displayReply.size() > 3 && displayReply[3] == '-') displayReply[3] = ' ';
+                if (awaitingReply) {
+                    cout << "Server: " << displayReply << endl;
+                } else {
+                    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+                    string msg = "\r" + string(70, ' ') + "\rServer: " + displayReply + "\n\nftp> ";
+                    DWORD written;
+                    WriteConsoleA(hOut, msg.c_str(), msg.length(), &written, NULL);
+                }
+            } else {
+                string cleanReply = reply;
+                size_t start = cleanReply.find_first_not_of(" \t");
+                if (start != string::npos) cleanReply = cleanReply.substr(start);
+                else cleanReply = "";
+                if (awaitingReply) {
+                    cout << "      " << cleanReply << endl;
+                } else {
+                    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+                    string msg = "\r" + string(70, ' ') + "\r      " + cleanReply + "\n\nftp> ";
+                    DWORD written;
+                    WriteConsoleA(hOut, msg.c_str(), msg.length(), &written, NULL);
+                }
+            }
 
             if (code == "227") {
                 unsigned short p;
@@ -245,18 +253,44 @@ void ControlChannel::receiverLoop() {
                 unsigned short p;
                 if (parseEmbeddedPort(reply, p)) serverUploadPort = p;
 
+                uintmax_t totalSize = 0;
+                size_t startSize = reply.find("(");
+                size_t endSize = reply.find(" bytes)");
+                if (startSize != string::npos && endSize != string::npos && endSize > startSize) {
+                    try { totalSize = stoull(reply.substr(startSize + 1, endSize - startSize - 1)); }
+                    catch (...) {}
+                }
+
                 string cmdWord, filename;
                 {
                     lock_guard<mutex> lock(pendingMutex);
                     cmdWord = pendingCmdWord;
                     filename = pendingArg;
                 }
-                thread([this, cmdWord, filename]() {
-                    this->doDataTransfer(cmdWord, filename);
-                }).detach();
+                
+                if (cmdWord == "LIST" || cmdWord == "NLST") {
+                    this->doDataTransfer(cmdWord, filename, totalSize);
+                } else {
+                    thread([this, cmdWord, filename, totalSize]() {
+                        this->doDataTransfer(cmdWord, filename, totalSize);
+                    }).detach();
+                }
+
+                // Cho phép nhập lệnh mới (abor) khi thanh tiến trình đang chạy
+                cout << endl;
+                {
+                    lock_guard<mutex> lock(replyMutex);
+                    awaitingReply = false;
+                }
+                replyCv.notify_one();
             }
-            else if (isStatusCode) {
-                //Phản hồi kết thúc chuẩn (không phải 150) -> báo cho thread bàn phím được in "ftp> " tiếp theo
+            else if (isFinalStatusCode) {
+                if (code == "426" || code == "225") {
+                    DataChannel* dc = activeDataChannel.load();
+                    if (dc) dc->stop();
+                }
+
+                if (awaitingReply) cout << endl;
                 {
                     lock_guard<mutex> lock(replyMutex);
                     awaitingReply = false;
@@ -284,7 +318,7 @@ void ControlChannel::run() {
 
     string input;
     while (keepRunning) {
-        cout << "ftp> ";
+        cout << "ftp> " << std::flush;
         if (!getline(cin, input)) break;
         if (input.empty()) continue;
 
@@ -306,8 +340,24 @@ void ControlChannel::run() {
             }
         }
 
-        if (cmdWord == "RETR" && dataMode.load() == DataMode::NONE) {
-            autoNegotiateActivePort();
+        if ((cmdWord == "RETR" || cmdWord == "LIST" || cmdWord == "NLST" || cmdWord == "STOR" || cmdWord == "STOU" || cmdWord == "APPE") && dataMode.load() == DataMode::NONE) {
+            cerr << "425 Can't open data connection: send PORT or PASV before using this command\n";
+            cout << endl;
+            continue;
+        }
+
+        if (cmdWord == "STOR" || cmdWord == "STOU" || cmdWord == "APPE") {
+            if (cmdArg.empty()) {
+                cerr << "501 Syntax error in parameters\n";
+                cout << endl;
+                continue;
+            }
+            string localPath = resolvePath(cmdArg).string();
+            if (!fs::exists(localPath) || !fs::is_regular_file(localPath)) {
+                cerr << "550 File unavailable, local file not found: " << cmdArg << "\n";
+                cout << endl;
+                continue;
+            }
         }
 
         {
@@ -325,13 +375,15 @@ void ControlChannel::run() {
         string cmdLine = input + "\r\n";
         send(tcpSocket, cmdLine.c_str(), (int)cmdLine.size(), 0);
 
-        if (cmdWord == "QUIT") { keepRunning = false; break; }
+        bool isQuit = (cmdWord == "QUIT");
 
         //Chờ đến khi receiverLoop() báo đã nhận phản hồi (hoặc mất kết nối) rồi mới in "ftp> " tiếp theo
         {
             unique_lock<mutex> lock(replyMutex);
             replyCv.wait(lock, [this] { return !awaitingReply || !keepRunning; });
         }
+
+        if (isQuit) { keepRunning = false; break; }
     }
 
     stop(); //Đóng socket trước để receiverThread thoát recv() và join không bị treo (tránh deadlock)
