@@ -2,25 +2,24 @@
 #include "lib.h"
 #include "DataChannel.h"
 
-//Phiên làm việc - mỗi Client có phiên riêng độc lập
 class Session {
 private:
-	bool isLoggedIn;                //Đăng nhập
-	string userName;                //Tên
-	string currentDir;              //Thư mục làm việc hiện tại của Client trên Server
-	string dataType;                //Định dạng dữ liệu - A = ASCII, I = IMAGE/BINARY
-	string transferMode;            //Cách truyền dữ liệu - S = STREAM, B = BLOCK, C = COMPRESSED
-	string renameFrom;              //Tên (logical) đang chờ RNTO hoàn tất; rỗng = không có RNFR đang chờ
-	DataMode dataMode;              //Chế độ truyền dữ liệu - ACTIVE = Client tự chọn port, PASSIVE = Server tự chọn port
-	string activeIp;                //ACTIVE: IP của Client gửi qua lệnh PORT
-	unsigned short activePort;      //ACTIVE: Port của Client gửi qua lệnh PORT
-	unsigned short passivePort;     //PASSIVE: Port của Server tự chọn
-	bool isAborted;                 // Báo hiệu chuyển giao bị hủy bỏ bởi ABOR
-	mutex dcMutex;                  //Mutex bảo vệ activeDataChannel, tránh crash giữa 2 luồng chính và phụ/crash giữa 2 luồng phụ cùng Session
-	DataChannel* activeDataChannel; //Con trỏ QUAN SÁT (không sở hữu) tới DataChannel đang chạy của Client, chỉ dùng để ABOR gọi stop(); vòng đời thật thuộc shared_ptr bên CommandHandler
+	bool isLoggedIn;
+	string userName;
+	string currentDir;
+	string dataType;
+	string transferMode;
+	string renameFrom;
+	DataMode dataMode;
+	string activeIp;
+	unsigned short activePort;
+	unsigned short passivePort;
+	bool isAborted;
+	mutex dcMutex;
+	DataChannel* activeDataChannel;
 public:
 	Session();
-	~Session(); 
+	~Session();
 
 	bool getLoggedIn() const { return this->isLoggedIn; }
 	string getUserName() const { return this->userName; }

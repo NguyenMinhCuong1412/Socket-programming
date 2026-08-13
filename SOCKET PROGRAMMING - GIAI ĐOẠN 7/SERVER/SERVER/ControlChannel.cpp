@@ -4,33 +4,28 @@
 #include "SessionRegistry.h"
 
 void ControlChannel::handleClient(SOCKET clientSocket, string clientIp) {
-    //Tạo vòng đời cục bộ - bảo vệ các hàm bên trong tránh các luồng khác đụng vào
-    { //Mở phạm vi - vòng đời bắt đầu
-        lock_guard<mutex> lock(g_coutMutex); 
+    {
+        lock_guard<mutex> lock(g_coutMutex);
         cout << "Client connected from " << clientIp << endl;
-    } //Đóng phạm vi - vòng đời kết thúc
+    }
 
-    //Đăng ký session này vào bảng session đang hoạt động + in bảng để giám khảo/log thấy ngay lúc connect
     SessionRegistry::add(clientSocket, clientIp);
     SessionRegistry::printTable();
 
-    //Gửi mã chào FTP
     string greeting = "220 Service ready\r\n";
     send(clientSocket, greeting.c_str(), (int)greeting.size(), 0);
 
-    //Khởi tạo phiên làm việc và công cụ xử lý lệnh riêng cho Client-TCP
     Session session;
     CommandHandler handler;
     handler.setControlSocket(clientSocket);
     handler.setClientIp(clientIp);
-    char buffer[1024] = { 0 }; //Khởi tạo vùng nhớ cố định 
+    char buffer[1024] = { 0 };
     string streamBuffer = "";
     bool shouldQuit = false;
 
     while (!shouldQuit) {
-        ZeroMemory(buffer, sizeof(buffer)); //Làm sạch vùng nhớ nhận lệnh
+        ZeroMemory(buffer, sizeof(buffer));
 
-        //Đọc dữ liệu từ socket do Client-TCP gửi và kiểm tra
         int byteRecv = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
         if (byteRecv <= 0) {
             lock_guard<mutex> lock(g_coutMutex);
@@ -41,28 +36,23 @@ void ControlChannel::handleClient(SOCKET clientSocket, string clientIp) {
 
         streamBuffer.append(buffer, byteRecv);
 
-        //Tách từng lệnh phân cách bởi '\n' (hoặc '\r\n')
         size_t pos = 0;
         while ((pos = streamBuffer.find('\n')) != string::npos) {
             string line = streamBuffer.substr(0, pos);
             streamBuffer.erase(0, pos + 1);
 
-            //Phân tích lệnh
             string command, argument;
             parseCmd(line, command, argument);
             if (command.empty()) continue;
 
-            //Tạo vòng đời cục bộ - bảo vệ các hàm bên trong tránh các luồng khác đụng vào
-            { //Mở phạm vi - vòng đời bắt đầu
+            {
                 lock_guard<mutex> lock(g_coutMutex);
                 cout << format("[{}] Command: {} | Argument: {}", clientIp, command, argument) << endl;
-            } //Đóng phạm vi - vòng đời kết thúc
+            }
 
-            //Thực thi lệnh và phản hồi
             string reply = handler.handle(session, command, argument);
             if (!reply.empty()) send(clientSocket, reply.c_str(), (int)reply.size(), 0);
 
-            //Cập nhật bảng session sau MỖI lệnh: user, trạng thái login, thư mục hiện tại, lệnh vừa chạy
             SessionRegistry::update(clientSocket, session.getUserName(), session.getLoggedIn(), session.getDir(), command);
 
             if (command == "QUIT") {
@@ -72,16 +62,13 @@ void ControlChannel::handleClient(SOCKET clientSocket, string clientIp) {
         }
     }
 
-    //Gỡ session khỏi bảng + in lại bảng để log phản ánh đúng trạng thái mới nhất
     SessionRegistry::remove(clientSocket);
     SessionRegistry::printTable();
 
-    closesocket(clientSocket); //Đóng riêng Client-TCP muốn thoát
+    closesocket(clientSocket);
 }
 
 void ControlChannel::adminConsoleLoop() {
-    //Luồng riêng đọc lệnh admin từ bàn phím Server, KHÔNG ảnh hưởng vòng lặp accept() chính
-    //Gõ "sessions" bất cứ lúc nào để xem bảng session đang hoạt động (phục vụ log/demo trực tiếp)
     string line;
     while (true) {
         if (!getline(cin, line)) break;
@@ -101,25 +88,22 @@ void ControlChannel::adminConsoleLoop() {
 }
 
 ControlChannel::ControlChannel(unsigned short port) {
-	this->tcpPort = port;            //CONTROL_PORT = 8080
+	this->tcpPort = port;
     this->tcpSocket = INVALID_SOCKET;
 }
 
 bool ControlChannel::start() {
-    //Tạo TCP-socket 
     this->tcpSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (this->tcpSocket == INVALID_SOCKET) {
         cerr << format("421 Service not available, cannot create socket (WSA error: {})", WSAGetLastError()) << endl;
         return false;
     }
 
-    //Định danh địa chỉ Server-TCP
     sockaddr_in serverAddrTcp = {};
     serverAddrTcp.sin_family = AF_INET;
     serverAddrTcp.sin_addr.s_addr = INADDR_ANY;
     serverAddrTcp.sin_port = htons(this->tcpPort);
 
-    //Bind TCP-socket với địa chỉ Server-TCP
     if (bind(this->tcpSocket, (sockaddr*)&serverAddrTcp, sizeof(serverAddrTcp)) == SOCKET_ERROR) {
         cerr << format("421 Service not available, bind failed (WSA error: {})", WSAGetLastError()) << endl;
         closesocket(this->tcpSocket);
@@ -127,7 +111,6 @@ bool ControlChannel::start() {
         return false;
     }
 
-    //Listen từ Client-TCP
     if (listen(this->tcpSocket, SOMAXCONN) == SOCKET_ERROR) {
         cerr << format("421 Service not available, listen failed (WSA error: {})", WSAGetLastError()) << endl;
         closesocket(this->tcpSocket);
@@ -140,28 +123,23 @@ bool ControlChannel::start() {
 }
 
 void ControlChannel::run() {
-    //Khởi động luồng console admin (gõ "sessions" để xem bảng session đang hoạt động) - detach vì sống cùng vòng đời server
     thread(&ControlChannel::adminConsoleLoop, this).detach();
     cout << "Type 'sessions' anytime to view the active session table (type 'help' for more)." << endl;
 
     while (true) {
-        //Lấy thông tin Client-TCP được accept: các thông tin mạng + độ lớn vùng nhớ của Client-TCP 
         sockaddr_in clientAddr = {};
         int clientAddrLen = sizeof(clientAddr);
 
-        //Accept Client-TCP
         SOCKET clientSocket = accept(this->tcpSocket, (sockaddr*)&clientAddr, &clientAddrLen);
         if (clientSocket == INVALID_SOCKET) {
-            if (this->tcpSocket == INVALID_SOCKET) break; //tcpSocket đã bị stop() đóng (server đang tắt) -> thoát
+            if (this->tcpSocket == INVALID_SOCKET) break;
             cerr << format("421 Service not available, accept failed (WSA error: {})", WSAGetLastError()) << endl;
-            continue; //1 client accept lỗi không làm sập cả server
+            continue;
         }
 
-        //Vùng nhớ chứa địa chỉ IP Client kết nối tới
         char clientIpStr[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &clientAddr.sin_addr, clientIpStr, INET_ADDRSTRLEN);
 
-        //detach: mỗi thread Client tự lo vòng đời (Session/CommandHandler cục bộ)
         thread(&ControlChannel::handleClient, this, clientSocket, string(clientIpStr)).detach();
     }
 }

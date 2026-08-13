@@ -24,7 +24,7 @@ void SessionRegistry::update(SOCKET sock, const string& userName, bool loggedIn,
     const string& currentDir, const string& lastCommand) {
     lock_guard<mutex> lock(mtx);
     auto it = table.find(sock);
-    if (it == table.end()) return; //Session đã bị remove (race hiếm) -> bỏ qua an toàn
+    if (it == table.end()) return;
     it->second.userName = userName;
     it->second.loggedIn = loggedIn;
     it->second.currentDir = currentDir;
@@ -38,7 +38,7 @@ size_t SessionRegistry::count() {
 
 void SessionRegistry::printTable() {
     lock_guard<mutex> lockTable(mtx);
-    lock_guard<mutex> lockCout(g_coutMutex); //Không lẫn với các dòng log khác đang in xen kẽ
+    lock_guard<mutex> lockCout(g_coutMutex);
 
     cout << "==================== ACTIVE SESSION TABLE ====================\n";
     if (table.empty()) {

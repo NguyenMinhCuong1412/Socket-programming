@@ -4,13 +4,13 @@ Session::Session() {
 	this->isLoggedIn = false;
 	this->userName = "";
 	this->currentDir = "/";
-	this->dataType = "A";      
-	this->transferMode = "S";  
-	this->renameFrom = "";     
-	this->dataMode = DataMode::NONE;
+	this->dataType = "A";
+	this->transferMode = "S";
+	this->renameFrom = "";
+	this->dataMode = DataMode::ACTIVE;
 	this->activeIp = "";
-	this->activePort = 0;  
-	this->passivePort = 0; 
+	this->activePort = 0;
+	this->passivePort = 0;
 	this->activeDataChannel = nullptr;
 	this->isAborted = false;
 }
@@ -28,18 +28,18 @@ void Session::setMode(string mode) { this->transferMode = mode; }
 void Session::setRenameFrom(string name) { this->renameFrom = name; }
 
 void Session::setActiveMode(const string& ip, unsigned short port) {
-	this->dataMode = DataMode::ACTIVE; 
-	this->activeIp = ip; 
+	this->dataMode = DataMode::ACTIVE;
+	this->activeIp = ip;
 	this->activePort = port;
 }
 
 void Session::setPassiveMode(unsigned short port) {
-	this->dataMode = DataMode::PASSIVE; 
+	this->dataMode = DataMode::PASSIVE;
 	this->passivePort = port;
 }
 
 void Session::resetDataMode() {
-	this->dataMode = DataMode::NONE;
+	this->dataMode = DataMode::ACTIVE;
 	this->activeIp = "";
 	this->activePort = 0;
 	this->passivePort = 0;
@@ -54,7 +54,7 @@ bool Session::abortActiveTransfer() {
 	lock_guard<mutex> lock(this->dcMutex);
 	this->isAborted = true;
 	if (this->activeDataChannel != nullptr) {
-		this->activeDataChannel->stop(); //closesocket() -> recvfrom/sendto đang block ở thread phụ báo lỗi
+		this->activeDataChannel->stop();
 		return true;
 	}
 	return false;
