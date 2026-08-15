@@ -87,30 +87,26 @@ bool ControlChannel::parseEmbeddedPort(const string& reply, unsigned short& outP
 }
 
 fs::path ControlChannel::resolvePath(const string& arg) {
-    //Xác định tính tuyệt đối/tương đối của filename
     fs::path logical = (!arg.empty() && arg[0] == '/')
-        ? fs::path(arg)                    //Đường dẫn tuyệt đối trong client_root
-        : fs::path(this->currentDir) / arg; //Đường dẫn tương đối dựa trên thư mục hiện tại
+        ? fs::path(arg)
+        : fs::path(this->currentDir) / arg;
 
-    //Chuẩn hóa đường dẫn — lexically_normal không cho ".." vượt quá root
     string normStr = logical.lexically_normal().generic_string();
     if (normStr.empty()) normStr = "/";
-    if (normStr[0] != '/') return fs::path(); //an toàn kép, phòng trường hợp lạ
+    if (normStr[0] != '/') return fs::path();
 
-    //Map sang đường dẫn vật lý thật: CLIENT_ROOT + phần sau dấu "/" đầu
     fs::path relativePart = (normStr == "/") ? fs::path() : fs::path(normStr.substr(1));
     return fs::weakly_canonical(CLIENT_ROOT / relativePart);
 }
 
 
 void ControlChannel::doDataTransfer(const string& cmdWord, const string& filename, uintmax_t totalSize) {
-    //Resolve đường dẫn file qua client_root — bảo vệ mã nguồn gốc
     string localPath = resolvePath(filename).string();
 
     if (cmdWord == "STOR" || cmdWord == "STOU" || cmdWord == "APPE") {
         totalSize = fs::file_size(localPath);
         unsigned short destPort = (dataMode.load() == DataMode::PASSIVE) ? serverPasvPort.load() : serverUploadPort.load();
-        DataChannel dc(0); //port cục bộ ephemeral
+        DataChannel dc(0);
         activeDataChannel.store(&dc);
         if (dc.start()) {
             dc.sendFile(localPath, serverIp, destPort, totalSize, isAsciiMode.load());
@@ -120,7 +116,7 @@ void ControlChannel::doDataTransfer(const string& cmdWord, const string& filenam
     }
     else if (cmdWord == "RETR" || cmdWord == "LIST" || cmdWord == "NLST") {
         DataMode mode = dataMode.load();
-        
+
         bool isList = (cmdWord == "LIST" || cmdWord == "NLST");
         string targetFile = localPath;
         if (isList) {
@@ -189,7 +185,6 @@ void ControlChannel::receiverLoop() {
                 else cerr << format("\n426 Connection closed, transfer aborted (WSA error: {})", WSAGetLastError()) << endl;
             }
             keepRunning = false;
-            //Đánh thức thread bàn phím (nếu đang chờ phản hồi) để nó không bị treo mãi khi mất kết nối
             {
                 lock_guard<mutex> lock(replyMutex);
                 awaitingReply = false;
@@ -200,7 +195,6 @@ void ControlChannel::receiverLoop() {
 
         streamBuffer.append(buffer, byteRecv);
 
-        //Cắt và xử lý từng dòng phản hồi từ Server
         size_t pos = 0;
         while ((pos = streamBuffer.find('\n')) != string::npos) {
             string reply = streamBuffer.substr(0, pos);
@@ -215,14 +209,13 @@ void ControlChannel::receiverLoop() {
             bool isFinalStatusCode = isAnyStatusCode && (reply.size() == 3 || reply[3] == ' ');
 
             if (isAnyStatusCode) {
-                //If there's a hyphen (multi-line start), we can optionally replace it with space for cleaner UI
                 string displayReply = reply;
                 if (displayReply.size() > 3 && displayReply[3] == '-') displayReply[3] = ' ';
                 if (awaitingReply) {
                     cout << "Server: " << displayReply << endl;
                 } else {
                     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-                    string msg = "\r" + string(70, ' ') + "\rServer: " + displayReply + "\n\nftp> ";
+                    string msg = "\r" + string(70, ' ') + "\rServer: " + displayReply + "\nftp> ";
                     DWORD written;
                     WriteConsoleA(hOut, msg.c_str(), msg.length(), &written, NULL);
                 }
@@ -235,7 +228,7 @@ void ControlChannel::receiverLoop() {
                     cout << "      " << cleanReply << endl;
                 } else {
                     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-                    string msg = "\r" + string(70, ' ') + "\r      " + cleanReply + "\n\nftp> ";
+                    string msg = "\r" + string(70, ' ') + "\r      " + cleanReply + "\nftp> ";
                     DWORD written;
                     WriteConsoleA(hOut, msg.c_str(), msg.length(), &written, NULL);
                 }
@@ -267,7 +260,7 @@ void ControlChannel::receiverLoop() {
                     cmdWord = pendingCmdWord;
                     filename = pendingArg;
                 }
-                
+
                 if (cmdWord == "LIST" || cmdWord == "NLST") {
                     this->doDataTransfer(cmdWord, filename, totalSize);
                 } else {
@@ -276,8 +269,6 @@ void ControlChannel::receiverLoop() {
                     }).detach();
                 }
 
-                // Cho phép nhập lệnh mới (abor) khi thanh tiến trình đang chạy
-                cout << endl;
                 {
                     lock_guard<mutex> lock(replyMutex);
                     awaitingReply = false;
@@ -290,7 +281,6 @@ void ControlChannel::receiverLoop() {
                     if (dc) dc->stop();
                 }
 
-                if (awaitingReply) cout << endl;
                 {
                     lock_guard<mutex> lock(replyMutex);
                     awaitingReply = false;
@@ -366,7 +356,6 @@ void ControlChannel::run() {
             pendingArg = cmdArg;
         }
 
-        //Đánh dấu đang chờ phản hồi CHO LỆNH NÀY trước khi gửi đi, để không bỏ lỡ notify từ receiverLoop
         {
             lock_guard<mutex> lock(replyMutex);
             awaitingReply = true;
@@ -377,7 +366,6 @@ void ControlChannel::run() {
 
         bool isQuit = (cmdWord == "QUIT");
 
-        //Chờ đến khi receiverLoop() báo đã nhận phản hồi (hoặc mất kết nối) rồi mới in "ftp> " tiếp theo
         {
             unique_lock<mutex> lock(replyMutex);
             replyCv.wait(lock, [this] { return !awaitingReply || !keepRunning; });
@@ -386,7 +374,7 @@ void ControlChannel::run() {
         if (isQuit) { keepRunning = false; break; }
     }
 
-    stop(); //Đóng socket trước để receiverThread thoát recv() và join không bị treo (tránh deadlock)
+    stop();
 }
 
 void ControlChannel::stop() {

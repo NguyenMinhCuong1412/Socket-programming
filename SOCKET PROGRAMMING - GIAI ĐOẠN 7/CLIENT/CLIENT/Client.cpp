@@ -2,14 +2,12 @@
 #include "ControlChannel.h"
 
 int main(int argc, char* argv[]) {
-    //Khởi tạo môi trường socket
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
         cerr << "421 Service not available, WSAStartup failed" << endl;
         return 1;
     }
 
-    //Khởi tạo thư mục làm việc riêng cho Client
     error_code ec;
     fs::create_directories(CLIENT_ROOT, ec);
     if (ec) {
@@ -19,7 +17,6 @@ int main(int argc, char* argv[]) {
     }
     cout << "Client root: " << CLIENT_ROOT.string() << endl;
 
-    //Khởi tạo kênh điều khiển - TCP
     ControlChannel control(CONTROL_PORT, "127.0.0.1");
     if (!control.start()) {
         WSACleanup();
@@ -28,7 +25,6 @@ int main(int argc, char* argv[]) {
     control.run();
     control.stop();
 
-    //Dọn dẹp môi trường socket
     WSACleanup();
     return 0;
 }
