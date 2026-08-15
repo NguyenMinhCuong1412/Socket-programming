@@ -215,7 +215,7 @@ void ControlChannel::receiverLoop() {
                     cout << "Server: " << displayReply << endl;
                 } else {
                     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-                    string msg = "\r" + string(70, ' ') + "\rServer: " + displayReply + "\n\nftp> ";
+                    string msg = "\r" + string(70, ' ') + "\rServer: " + displayReply + "\nftp> ";
                     DWORD written;
                     WriteConsoleA(hOut, msg.c_str(), msg.length(), &written, NULL);
                 }
@@ -228,7 +228,7 @@ void ControlChannel::receiverLoop() {
                     cout << "      " << cleanReply << endl;
                 } else {
                     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-                    string msg = "\r" + string(70, ' ') + "\r      " + cleanReply + "\n\nftp> ";
+                    string msg = "\r" + string(70, ' ') + "\r      " + cleanReply + "\nftp> ";
                     DWORD written;
                     WriteConsoleA(hOut, msg.c_str(), msg.length(), &written, NULL);
                 }
@@ -269,7 +269,6 @@ void ControlChannel::receiverLoop() {
                     }).detach();
                 }
 
-                cout << endl;
                 {
                     lock_guard<mutex> lock(replyMutex);
                     awaitingReply = false;
@@ -282,7 +281,6 @@ void ControlChannel::receiverLoop() {
                     if (dc) dc->stop();
                 }
 
-                if (awaitingReply) cout << endl;
                 {
                     lock_guard<mutex> lock(replyMutex);
                     awaitingReply = false;

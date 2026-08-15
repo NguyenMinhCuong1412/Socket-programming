@@ -14,8 +14,29 @@ void updateProgressTitle(const string& action, uintmax_t current, uintmax_t tota
     if (GetConsoleScreenBufferInfo(h, &csbi)) {
         COORD oldPos = csbi.dwCursorPosition;
         SetConsoleCursorPosition(h, { 0, 0 });
-        cout << text << string(max(0, 80 - (int)text.length()), ' ');
+        int padLen = csbi.dwSize.X - (int)text.length() - 1;
+        if (padLen > 0) cout << text << string(padLen, ' ');
+        else cout << text;
         SetConsoleCursorPosition(h, oldPos);
+    }
+
+    static atomic<int> progressEpoch{ 0 };
+    int currentEpoch = ++progressEpoch;
+
+    if (current == total) {
+        thread([currentEpoch]() {
+            std::this_thread::sleep_for(chr::seconds(1));
+            if (progressEpoch.load() == currentEpoch) {
+                HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+                CONSOLE_SCREEN_BUFFER_INFO csbi;
+                if (GetConsoleScreenBufferInfo(h, &csbi)) {
+                    COORD oldPos = csbi.dwCursorPosition;
+                    SetConsoleCursorPosition(h, { 0, 0 });
+                    cout << string(csbi.dwSize.X - 1, ' ');
+                    SetConsoleCursorPosition(h, oldPos);
+                }
+            }
+        }).detach();
     }
 }
 

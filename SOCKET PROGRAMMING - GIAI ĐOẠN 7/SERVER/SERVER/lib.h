@@ -63,6 +63,7 @@ inline const fs::path SERVER_ROOT = fs::current_path() / "server_root";
 inline mutex g_coutMutex;
 
 enum class DataMode {
+    NONE,
 	ACTIVE,
 	PASSIVE
 };
